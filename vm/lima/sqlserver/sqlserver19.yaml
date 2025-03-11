@@ -1,0 +1,72 @@
+# limactl start --name=sqlserver19 ~sqlserver.yaml
+# for sqlserver sa password, find in the console log "SQL Server sa password is ${MSSQL_SA_PASSWORD}"
+# refer to https://learn.microsoft.com/en-us/sql/linux/sql-server-linux-release-notes-2022?view=sql-server-ver16
+# Ubuntu 20.04, or 22.04       for sqlserver 2022
+# Ubuntu 20.04, or 18.04 LTS 3 for sqlserver 2019
+# Ubuntu 18.04 LTS 3           for sqlserver 2017
+
+arch: "x86_64"
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/20.04/release/ubuntu-20.04-server-cloudimg-amd64.img"
+
+mounts:
+  - location: "~"
+  - location: "/tmp/lima"
+    writable: true
+
+containerd:
+  system: false
+  user: false
+
+portForwards:
+  - guestPort: 1433
+    hostIP: "0.0.0.0"
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/sh
+      # install sqlserver
+      sudo wget -qO- https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
+      # example of other sqlserver versions
+      #sudo add-apt-repository -y "$(wget -qO- https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/mssql-server-2022.list)"
+      sudo add-apt-repository -y "$(wget -qO- https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/mssql-server-2019.list)"
+      #sudo add-apt-repository -y "$(wget -qO- https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/mssql-server-2017.list)"
+      sudo apt-get update -y 
+      sudo apt-get install -y dialog pwgen
+      sudo apt-get install -y mssql-server 
+      sudo touch /var/opt/mssql/mssql.demo
+      cat <<EOF | sudo tee /var/opt/mssql/mssql.conf 
+      [sqlagent]
+      enabled = true
+
+      [licensing]
+      azurebilling = false
+
+      [EULA]
+      accepteula = Y
+
+      [telemetry]
+      customerfeedback = false
+      EOF
+      export MSSQL_SA_PASSWORD="$(pwgen -1)" 
+      /opt/mssql/bin/mssql-conf set-sa-password
+      sudo systemctl start mssql-server
+      echo "SQL Server sa password is ${MSSQL_SA_PASSWORD}"
+      # install ngrok
+      sudo snap install ngrok
+
+probes:
+  - script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      if ! timeout 30s bash -c "until nc -z localhost 1433; do sleep 3; done"; then
+              echo >&2 "sqlserver is not running yet"
+              exit 1
+      fi
+    hint: |
+      SQL server is not up yet.
+      Run "limactl shell sqlserver sudo tail /var/log/syslog" to check the log.
+message: |
+  SQL server is up!

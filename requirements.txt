@@ -1,0 +1,5 @@
+ipywidgets
+pymssql
+sqlalchemy
+jinja2
+pandas

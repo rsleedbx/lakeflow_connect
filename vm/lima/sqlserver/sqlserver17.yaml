@@ -1,5 +1,9 @@
+# limactl start --name=sqlserver17 https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/vm/lima/sqlserver/sqlserver17.yaml
 # limactl start --name=sqlserver17 sqlserver17.yaml
+# sqlserver on port 14332
 # for sqlserver sa password, find in the console log "SQL Server sa password is ${MSSQL_SA_PASSWORD}"
+# tail -f ~/.lima/sqlserver17/serial*.log | grep -m 1 "SQL Server sa password is"
+# grep -m 1 "SQL Server sa password is"  ~/.lima/sqlserver17/serial*.log
 # refer to https://learn.microsoft.com/en-us/sql/linux/sql-server-linux-release-notes-2022?view=sql-server-ver16
 # Ubuntu 20.04, or 22.04       for sqlserver 2022
 # Ubuntu 20.04, or 18.04 LTS 3 for sqlserver 2019
@@ -20,8 +24,13 @@ containerd:
   user: false
 
 portForwards:
+  # sqlserver
   - guestPort: 1433
-    hostIP: "0.0.0.0"
+    hostPort: 14332
+    #hostIP: "0.0.0.0"  # uncomment to allow external connection
+  # ngrok
+  - guestPort: 4040
+    hostPort: 40402
 
 provision:
   - mode: system
@@ -50,10 +59,42 @@ provision:
       [telemetry]
       customerfeedback = false
       EOF
-      export MSSQL_SA_PASSWORD="$(pwgen -1)" 
+      # make 32 char password
+      export MSSQL_SA_PASSWORD="$(pwgen -1 32)" 
       /opt/mssql/bin/mssql-conf set-sa-password
       sudo systemctl start mssql-server
       echo "SQL Server sa password is ${MSSQL_SA_PASSWORD}"
+
+      # create database user
+      export sql_cli_batch_mode="-h-1 -W -s , -w 1024"
+      export DB_ARC_USER=arcsrc
+      export DB_DB=arcsrc
+      # sqlcmd options used for batch operation
+      # -C Trust Server Certificate
+      # -h headers (-1 removes headers)
+      # -I Enable Quoted Identifiers
+      # -P password
+      # -s col separator
+      # -U login id
+      # -W remove trailing spaces
+      # -w screen width
+      cat <<EOF | cat <(printf "set NOCOUNT ON;\ngo\n") - | /opt/mssql-tools18/bin/sqlcmd -I -U "sa" -P "${MSSQL_SA_PASSWORD}" -C $sql_cli_batch_mode
+      CREATE LOGIN ${DB_ARC_USER} WITH PASSWORD = '${MSSQL_SA_PASSWORD}'
+      go
+      create database ${DB_DB}
+      go
+      use ${DB_DB}
+      go
+      CREATE USER ${DB_ARC_USER} FOR LOGIN ${DB_ARC_USER} WITH DEFAULT_SCHEMA=dbo
+      go
+      ALTER ROLE db_owner ADD MEMBER ${DB_ARC_USER}
+      go
+      ALTER ROLE db_ddladmin ADD MEMBER ${DB_ARC_USER}
+      go
+      ALTER LOGIN ${DB_ARC_USER} WITH DEFAULT_DATABASE=[${DB_DB}]
+      go
+      EOF
+
       # install ngrok
       sudo snap install ngrok
 

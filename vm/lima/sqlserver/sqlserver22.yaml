@@ -1,5 +1,9 @@
+# limactl start --name=sqlserver22 https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/vm/lima/sqlserver/sqlserver22.yaml
 # limactl start --name=sqlserver22 sqlserver22.yaml
+# sqlserver on port 14330
 # for sqlserver sa password, find in the console log "SQL Server sa password is ${MSSQL_SA_PASSWORD}"
+# tail -f ~/.lima/sqlserver22/serial*.log | grep "SQL Server sa password is"
+# grep -m 1 "SQL Server sa password is"  ~/.lima/sqlserver22/serial*.log
 # refer to https://learn.microsoft.com/en-us/sql/linux/sql-server-linux-release-notes-2022?view=sql-server-ver16
 # Ubuntu 20.04, or 22.04       for sqlserver 2022
 # Ubuntu 20.04, or 18.04 LTS 3 for sqlserver 2019
@@ -20,9 +24,13 @@ containerd:
   user: false
 
 portForwards:
-  - guestPort: 1433
-    hostIP: "0.0.0.0"
-
+  # sqlserver
+  - guestPort: 14330
+    #hostPort: 14330   # ngrok requires guestPort and hostport be the same
+    #hostIP: "0.0.0.0"  # uncomment to allow external connection
+  # ngrok
+  - guestPort: 4040
+    #hostPort: 40400
 provision:
   - mode: system
     script: |
@@ -49,19 +57,118 @@ provision:
 
       [telemetry]
       customerfeedback = false
-      EOF
-      export MSSQL_SA_PASSWORD="$(pwgen -1)" 
+
+      [network]
+      tcpport = 14330      
+EOF
+      # make 32 char password
+      export MSSQL_SA_PASSWORD="$(pwgen -1 32)" 
       /opt/mssql/bin/mssql-conf set-sa-password
       sudo systemctl start mssql-server
       echo "SQL Server sa password is ${MSSQL_SA_PASSWORD}"
+    
+      # install mstools like sqlcmd
+      curl https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+      sudo apt-get update -y
+      sudo chmod a+x /var/opt/mssql
+      sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18
+
       # install ngrok
       sudo snap install ngrok
+
+      # wait for sqlserver to be up
+      if ! timeout 30s bash -c "until nc -z localhost 14330; do sleep 3; done"; then
+              echo >&2 "sqlserver is not running yet"
+              exit 1
+      fi
+
+      # create database user
+      export sql_cli_batch_mode="-h-1 -W -s , -w 1024 -e"
+      export DB_ARC_USER=arcsrc
+      export DB_DB=arcsrc
+      export DB_SCHEMA=arcsrc
+      # sqlcmd options used for batch operation
+      # -C Trust Server Certificate
+      # -d database name
+      # -e echo command
+      # -h headers (-1 removes headers)
+      # -I Enable Quoted Identifiers
+      # -P password
+      # -s col separator
+      # -U login id
+      # -W remove trailing spaces
+      # -w screen width
+      cat <<EOF | /opt/mssql-tools18/bin/sqlcmd -I -S "localhost,14330" -U "sa" -P "${MSSQL_SA_PASSWORD}" -C $sql_cli_batch_mode
+      CREATE LOGIN ${DB_ARC_USER} WITH PASSWORD = '${MSSQL_SA_PASSWORD}'
+      go
+      alter login ${DB_ARC_USER} with password = '${MSSQL_SA_PASSWORD}'
+      go
+      CREATE USER ${DB_ARC_USER} FOR LOGIN ${DB_ARC_USER} WITH DEFAULT_SCHEMA=dbo
+      go
+      create database ${DB_DB}
+      go
+      alter database ${DB_DB} set online
+      go
+EOF
+
+      # wait for database to be online and poll interval 30 sec * 10 times = 300 seconds
+      cat <<EOF | /opt/mssql-tools18/bin/sqlcmd -I -S "localhost,14330" -U "sa" -P "${MSSQL_SA_PASSWORD}" -C $sql_cli_batch_mode
+      DECLARE @STATE_DESC varchar(max), @WAIT_COUNT int=0
+      select @STATE_DESC=state_desc from sys.databases where name='${DB_DB}'
+      WHILE (@STATE_DESC != 'ONLINE' and @WAIT_COUNT < 10)
+      BEGIN
+        WAITFOR DELAY '00:00:30'
+        select @STATE_DESC=state_desc from sys.databases where name='${DB_DB}'
+        SET  @WAIT_COUNT = @WAIT_COUNT + 1
+      END 
+      SELECT @STATE_DESC, @WAIT_COUNT 
+      GO
+EOF
+
+      # enable ct/cdc and create user
+      cat <<EOF | /opt/mssql-tools18/bin/sqlcmd -d "${DB_DB}" -I -S "localhost,14330" -U "sa" -P "${MSSQL_SA_PASSWORD}" -C $sql_cli_batch_mode
+      ALTER DATABASE  ${DB_DB} SET CHANGE_TRACKING = ON (CHANGE_RETENTION = 2 DAYS, AUTO_CLEANUP = ON)  
+      go
+      EXECUTE sys.sp_cdc_enable_db
+      go
+      CREATE USER ${DB_ARC_USER} FOR LOGIN ${DB_ARC_USER} WITH DEFAULT_SCHEMA=dbo
+      go
+      ALTER ROLE db_owner ADD MEMBER ${DB_ARC_USER}
+      go
+      ALTER ROLE db_ddladmin ADD MEMBER ${DB_ARC_USER}
+      go
+      ALTER LOGIN ${DB_ARC_USER} WITH DEFAULT_DATABASE=[${DB_DB}]
+      go
+EOF
+
+      # enable DDL capture
+      wget -qO- https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/ddl_support_objects.sql | \
+        sed "s/SET \@replicationUser = '';/SET \@replicationUser = '${DB_ARC_USER}';/" | \
+        /opt/mssql-tools18/bin/sqlcmd -d "${DB_DB}" -I -S "localhost,14330" -U "sa" -P "${MSSQL_SA_PASSWORD}" -C $sql_cli_batch_mode
+
+      # create a pk and no pk table for testing and enable change tracking and change data capture on them
+      cat <<EOF | /opt/mssql-tools18/bin/sqlcmd -d "${DB_DB}" -I -S "localhost,14330" -U "${DB_ARC_USER}" -P "${MSSQL_SA_PASSWORD}" -C $sql_cli_batch_mode
+      create schema [${DB_SCHEMA}]
+      go
+      create table [${DB_SCHEMA}].[intpk] (pk int primary key)
+      go
+      insert into [${DB_SCHEMA}].[intpk] values (1),(2),(3)
+      go
+      ALTER TABLE [${DB_SCHEMA}].[intpk] ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON) 
+      go
+      create table [${DB_SCHEMA}].[intix] (pk int)
+      go
+      insert into [${DB_SCHEMA}].[intix] values (1),(2),(3)
+      go
+      EXEC sys.sp_cdc_enable_table @source_schema = N'${DB_SCHEMA}', @source_name = N'intix', @role_name = NULL, @supports_net_changes = 0
+      go
+EOF
 
 probes:
   - script: |
       #!/bin/bash
       set -eux -o pipefail
-      if ! timeout 30s bash -c "until nc -z localhost 1433; do sleep 3; done"; then
+      if ! timeout 30s bash -c "until nc -z localhost 14330; do sleep 3; done"; then
               echo >&2 "sqlserver is not running yet"
               exit 1
       fi

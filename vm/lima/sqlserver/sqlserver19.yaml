@@ -1,5 +1,6 @@
 # limactl start --name=sqlserver19 https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/vm/lima/sqlserver/sqlserver19.yaml
 # limactl start --name=sqlserver19 sqlserver19.yaml
+# sqlserver on port 14331
 # for sqlserver sa password, find in the console log "SQL Server sa password is ${MSSQL_SA_PASSWORD}"
 # tail -f ~/.lima/sqlserver19/serial*.log | grep "SQL Server sa password is"
 # grep -m 1 "SQL Server sa password is"  ~/.lima/sqlserver19/serial*.log
@@ -23,9 +24,13 @@ containerd:
   user: false
 
 portForwards:
+  # sqlserver
   - guestPort: 1433
     hostPort: 14331
     #hostIP: "0.0.0.0"  # uncomment to allow external connection
+  # ngrok
+  - guestPort: 4040
+    hostPort: 40401    
 
 provision:
   - mode: system
@@ -54,7 +59,8 @@ provision:
       [telemetry]
       customerfeedback = false
       EOF
-      export MSSQL_SA_PASSWORD="$(pwgen -1)" 
+      # make 32 char password
+      export MSSQL_SA_PASSWORD="$(pwgen -1 32)" 
       /opt/mssql/bin/mssql-conf set-sa-password
       sudo systemctl start mssql-server
       echo "SQL Server sa password is ${MSSQL_SA_PASSWORD}"

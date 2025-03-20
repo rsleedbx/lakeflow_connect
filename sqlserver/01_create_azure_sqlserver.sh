@@ -174,3 +174,7 @@ fi
 
 echo "az sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${WHOAMI}/providers/Microsoft.Sql/servers/${DB_HOST}/networking"
 echo ""
+
+# #############################################################################
+echo "Billing : https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis"
+echo ""

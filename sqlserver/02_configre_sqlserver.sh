@@ -1,5 +1,25 @@
 #!/usr/bin/env bash
 
+if [[ -z $DBX_USERNAME ]] || \
+ [[ -z $WHOAMI ]] || \
+ [[ -z $EXPIRE_DATE ]] || \
+ [[ -z $DB_CATALOG ]] || \
+ [[ -z $DB_SCHEMA ]] || \
+ [[ -z $DB_HOST ]] || \
+ [[ -z $DB_PORT ]] || \
+ [[ -z $DBA_PASSWORD ]] || \
+ [[ -z $USER_PASSWORD ]] || \
+ [[ -z $DBA_USERNAME ]] || \
+ [[ -z $USER_USERNAME ]] || \
+ [[ -z $DB_HOST ]] || \
+ [[ -z $DB_HOST_FQDN ]]; then 
+    if [[ -f ./create_azure_sqlserver_01.sh ]]; then
+        source ./create_azure_sqlserver_01.sh
+    else
+        source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/create_azure_sqlserver_01.sh)
+    fi
+fi
+
 # #############################################################################
 
 # connect to master catalog

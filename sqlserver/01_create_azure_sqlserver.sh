@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# must be sourced for exports to continue to the next script
+if [ "$0" == "$BASH_SOURCE" ]; then
+  echo "Script is being executed directly. Please run as source $0"
+  exit 1
+fi
+
 export REMOVE_AFTER=$(date --date='+0 day' +%Y-%m-%d)
 
 export CLOUD_LOCATION="${CLOUD_LOCATION:-"East US"}"
@@ -27,7 +33,7 @@ export SECRETS_SCOPE="${WHOAMI}_${DB_HOST}"
 export DBA_PASSWORD="$(databricks secrets get-secret ${SECRETS_SCOPE} DBA_PASSWORD 2>/dev/null | jq -r .value | base64 --decode)"
 DBA_PASSWORD_RESET=""
 if [[ -z "$DBA_PASSWORD" ]]; then 
-    export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1B 32)}"  # set if not defined
+    export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y 32)}"  # set if not defined
     if [[ -n $DB_HOST_FQDN ]]; then 
         export DBA_PASSWORD_RESET=1; 
         databricks secrets create-scope ${SECRETS_SCOPE} 2>/dev/null 
@@ -39,7 +45,7 @@ fi
 export USER_PASSWORD=$(databricks secrets get-secret ${SECRETS_SCOPE} USER_PASSWORD 2>/dev/null | jq -r .value | base64 --decode)
 USER_PASSWORD_RESET=""
 if [[ -z $USER_PASSWORD ]]; then 
-    export USER_PASSWORD=${USER_PASSWORD:-$(pwgen -1B 32)}  # set if not defined
+    export USER_PASSWORD=${USER_PASSWORD:-$(pwgen -1y 32)}  # set if not defined
     if [[ -n $DB_HOST_FQDN ]]; then 
         export USER_PASSWORD_RESET=1
         databricks secrets create-scope ${SECRETS_SCOPE} 2>/dev/null  
@@ -95,6 +101,9 @@ export az_group_show_output
 if [[ -z "$az_group_show_output" ]]; then
     az_group_create_output=$(az group create --resource-group "${WHOAMI}" --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}")
     export az_group_create_output
+    echo "az group ${WHOAMI}: created"
+else
+    echo "az group ${WHOAMI}: exists"
 fi
 az configure --defaults group="${WHOAMI}"
 
@@ -117,6 +126,9 @@ if [[ -z "${az_sql_server_list_output}" ]]; then
     --admin-user "${DBA_USERNAME}" \
     --admin-password "${DBA_PASSWORD}"
     )
+    echo "az sql ${DB_HOST}: created"
+else
+    echo "az sql ${DB_HOST}: exists"
 fi
 export az_sql_server_create_output
 
@@ -138,22 +150,27 @@ echo ""
 
 # #############################################################################
 
-az_sql_db_list_output=$(az sql db list --output table)
+az_sql_db_list_output=$(az sql db show --name ${DB_CATALOG} --output table 2>/dev/null)
 export az_sql_db_list_output
 
 if [[ -z "${az_sql_db_list_output}" ]]; then
     # try free first
+    echo "az sql db ${DB_CATALOG}: trying --use-free-limit"
     az_sql_db_create_output=$(az sql db create --name "${DB_CATALOG}" -e GeneralPurpose -f Gen5 -c 1 \
     --compute-model Serverless --backup-storage-redundancy Local \
     --zone-redundant false --exhaustion-behavior AutoPause --use-free-limit 2>/dev/null 
     )
     # if not free, then use paid plan
     if [[ $? != 0 ]]; then
+        echo "az sql db ${DB_CATALOG}: trying paid plan"
         az_sql_db_create_output=$(az sql db create --name "${DB_CATALOG}" -e GeneralPurpose -f Gen5 -c 1 \
         --compute-model Serverless --backup-storage-redundancy Local \
         --zone-redundant false --exhaustion-behavior AutoPause --auto-pause-delay 15
         )
     fi 
+    echo "az sql db ${DB_CATALOG}: created"
+else
+    echo "az sql db ${DB_CATALOG}: exists"
 fi
 export az_sql_db_create_output
 
@@ -169,7 +186,9 @@ az_sql_server_firewall_rules_output="$(az sql server firewall-rule list)"
 export az_sql_server_firewall_rules_output
 
 if [[ -z "${az_sql_server_firewall_rules_output}" ]]; then
-    echo "Warning:  Make sure to configure firewall rules"
+    echo "az sql server firewall-rule ${DB_HOST}: MAKE SURE TO CONFIGURE FIREWALL RULES"
+else
+    echo "az sql server firewall-rule ${DB_HOST}: exists"
 fi
 
 echo "az sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${WHOAMI}/providers/Microsoft.Sql/servers/${DB_HOST}/networking"

@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# must be sourced for exports to continue to the next script
+if [ "$0" == "$BASH_SOURCE" ]; then
+  echo "Script is being executed directly. Please run as source $0"
+  exit 1
+fi
+
 if [[ -z $DBX_USERNAME ]] || \
  [[ -z $WHOAMI ]] || \
  [[ -z $EXPIRE_DATE ]] || \
@@ -238,4 +244,5 @@ fi
 if [[ -n "${DELETE_AFTER_SLEEP}" ]]; then
     nohup sleep "${DELETE_AFTER_SLEEP}" && kill $LOAD_GENERATOR_PID >> ~/nohup.out 2>&1 &
 fi
-echo "Load Generator: started with PID=$LOAD_GENERATOR_PID"
+echo "Load Generator: started with PID=$LOAD_GENERATOR_PID."
+echo ""

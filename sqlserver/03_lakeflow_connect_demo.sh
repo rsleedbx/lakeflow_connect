@@ -19,10 +19,10 @@ if [[ -z $DBX_USERNAME ]] || \
  [[ -z $USER_USERNAME ]] || \
  [[ -z $DB_HOST ]] || \
  [[ -z $DB_HOST_FQDN ]]; then 
-    if [[ -f ./create_azure_sqlserver_01.sh ]]; then
-        source ./create_azure_sqlserver_01.sh
+    if [[ -f ./00_lakeflow_connect_env.sh ]]; then
+        source ./00_lakeflow_connect_env.sh
     else
-        source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/create_azure_sqlserver_01.sh)
+        source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/00_lakeflow_connect_env.sh)
     fi
 fi
 
@@ -96,6 +96,9 @@ fi
 # needed by the gateway pipeline
 CONNECTION_ID=$(echo "$conn_output" | jq -r '.connection_id')
 export CONNECTION_ID
+
+# don't delete connection for now
+connection_delete() {
 if [[ -n $CONNECTION_ID ]]; then
     echo "CONNECTION_ID=$CONNECTION_ID"
     if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
@@ -109,7 +112,7 @@ if [[ -n $CONNECTION_ID ]]; then
 else
     echo "Error: CONNECTION_ID not set"
 fi
-
+}
 
 # #############################################################################
 

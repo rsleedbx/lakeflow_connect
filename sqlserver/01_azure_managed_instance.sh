@@ -6,6 +6,8 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
+export AZ_DB_TYPE=zmi
+
 if [[ -z $DBX_USERNAME ]] || \
  [[ -z $WHOAMI ]] || \
  [[ -z $EXPIRE_DATE ]] || \
@@ -19,7 +21,11 @@ if [[ -z $DBX_USERNAME ]] || \
  [[ -z $USER_USERNAME ]] || \
  [[ -z $DB_HOST ]] || \
  [[ -z $DB_HOST_FQDN ]]; then 
- source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/create_azure_sqlserver_01.sh)
+    if [[ -f ./00_lakeflow_connect_env.sh ]]; then
+        source ./00_lakeflow_connect_env.sh
+    else
+        source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/00_lakeflow_connect_env.sh)
+    fi
 fi
 
 NINE_CHAR_ID=$(date +%s | xargs printf "%08x\n") # number of seconds since epoch in hex
@@ -35,7 +41,8 @@ export subnet="${WHOAMI}-subnet"        #-$randomIdentifier"
 export nsg="${WHOAMI}-nsg"              #-$randomIdentifier"
 export route="${WHOAMI}-route"          #-$randomIdentifier"
 
-DB_HOST=${DB_HOST}-mi                   # cannot be understore
+DB_HOST=${DB_HOST:-${DB_BASENAME}-mi}   # cannot be understore
+DB_PORT=3342
 
 export az_id=$(az account show | jq -r .id)
 export az_tenantDefaultDomain=$(az account show | jq -r .tenantDefaultDomain)
@@ -119,7 +126,7 @@ if [[ $? != 0 ]]; then
     else
         echo "az mi db ${DB_HOST}: failed."
         cat /tmp/az_sql_mi_create_stdout.$$ /tmp/az_sql_mi_create_stderr.$$
-        if [ "$0" == "$BASH_SOURCE" ]; then return 1; else exit 1; fi
+        if [ "$0" == "$BASH_SOURCE" ]; then return 1; else return 1; fi
     fi
 
 else
@@ -127,14 +134,18 @@ else
 fi
 
 # update password save to secrets
-az sql mi update --admin-password $DBA_PASSWORD --name $DB_HOST --resource-group $resourceGroup --subnet $subnet --vnet-name $vNet --location "$CLOUD_LOCATION" >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-if [[ $? == 0 ]]; then
-    databricks secrets create-scope ${SECRETS_SCOPE} 2>/dev/null 
-    databricks secrets put-secret ${SECRETS_SCOPE} DBA_PASSWORD --string-value "${DBA_PASSWORD}"
-    databricks secrets put-secret ${SECRETS_SCOPE} DBA_USERNAME --string-value "${DBA_USERNAME}"
-else
-    echo "az sql mi update --admin-password failed"
-    if [ "$0" == "$BASH_SOURCE" ]; then return 1; else exit 1; fi
+SECRETS_DBA_PASSWORD="$(databricks secrets get-secret ${SECRETS_SCOPE} DBA_PASSWORD 2>/dev/null | jq -r .value | base64 --decode)"
+if [[ "$SECRETS_DBA_PASSWORD" != "$DBA_PASSWORD" ]]; then
+    echo "az sql mi update --admin-password"
+    az sql mi update --admin-password $DBA_PASSWORD --name $DB_HOST --resource-group $resourceGroup --subnet $subnet --vnet-name $vNet >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
+    if [[ $? == 0 ]]; then
+        databricks secrets create-scope ${SECRETS_SCOPE} 2>/dev/null 
+        databricks secrets put-secret ${SECRETS_SCOPE} DBA_PASSWORD --string-value "${DBA_PASSWORD}"
+        databricks secrets put-secret ${SECRETS_SCOPE} DBA_USERNAME --string-value "${DBA_USERNAME}"
+    else
+        echo "az sql mi update --admin-password failed"
+        if [ "$0" == "$BASH_SOURCE" ]; then return 1; else return 1; fi
+    fi
 fi
 
 export DB_HOST_FQDN=$(cat /tmp/az_stdout.$$ | jq -r .fullyQualifiedDomainName | sed "s/^${DB_HOST}\./${DB_HOST}\.public\./g")
@@ -156,7 +167,7 @@ if [[ $? != 0 ]]; then
     else
         echo "az sql midb ${DB_CATALOG}: failed."
         cat /tmp/az_sql_mi_create_stdout.$$ /tmp/az_sql_mi_create_stderr.$$
-        if [ "$0" == "$BASH_SOURCE" ]; then return 1; else exit 1; fi
+        if [ "$0" == "$BASH_SOURCE" ]; then return 1; else return 1; fi
     fi
 else
     echo "az sql midb ${DB_CATALOG}: exists"
@@ -179,3 +190,20 @@ delete_vnet() {
     az network nsg delete --name $nsg 
     az network route-table delete --name $route --resource-group $resourceGroup
 }
+
+# #############################################################################
+
+# Run firewall rules before coming here
+az network nsg rule show --name "allow_dbx_inbound" --nsg-name $nsg >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
+if [[ $? != 0 ]]; then
+    echo "az network nsg rule create --name "allow_dbx_inbound" --nsg-name $nsg: MAKE SURE TO CONFIGURE FIREWALL RULES"
+else
+    echo "az network nsg rule --name "allow_dbx_inbound" --nsg-name $nsg: exists"
+fi
+
+echo "az sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${WHOAMI}/providers/Microsoft.Network/networkSecurityGroups/${nsg}/overview"
+echo ""
+
+# #############################################################################
+echo "Billing : https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis"
+echo ""

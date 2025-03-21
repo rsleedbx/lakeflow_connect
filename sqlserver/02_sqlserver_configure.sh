@@ -19,10 +19,10 @@ if [[ -z $DBX_USERNAME ]] || \
  [[ -z $USER_USERNAME ]] || \
  [[ -z $DB_HOST ]] || \
  [[ -z $DB_HOST_FQDN ]]; then 
-    if [[ -f ./create_azure_sqlserver_01.sh ]]; then
-        source ./create_azure_sqlserver_01.sh
+    if [[ -f ./00_lakeflow_connect_env.sh ]]; then
+        source ./00_lakeflow_connect_env.sh
     else
-        source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/create_azure_sqlserver_01.sh)
+        source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/00_lakeflow_connect_env.sh)
     fi
 fi
 
@@ -45,6 +45,15 @@ go
 CREATE USER ${USER_USERNAME} FOR LOGIN ${USER_USERNAME} WITH DEFAULT_SCHEMA=dbo
 go
 EOF
+
+# update password save to secrets
+SECRETS_USER_PASSWORD="$(databricks secrets get-secret ${SECRETS_SCOPE} USER_PASSWORD 2>/dev/null | jq -r .value | base64 --decode)"
+if [[ "$SECRETS_USER_PASSWORD" != "$USER_PASSWORD" ]]; then
+    echo "Updating secrets ${SECRETS_SCOPE}"
+    databricks secrets create-scope ${SECRETS_SCOPE} 2>/dev/null 
+    databricks secrets put-secret ${SECRETS_SCOPE} USER_PASSWORD --string-value "${USER_PASSWORD}"
+    databricks secrets put-secret ${SECRETS_SCOPE} USER_USERNAME --string-value "${USER_USERNAME}"
+fi
 
 # connect to master as a user
 echo "select 1" | sqlcmd -S $DB_HOST_FQDN,${DB_PORT} -U "$USER_USERNAME" -P "$USER_PASSWORD" -C -l 60 >/tmp/select1_stdout.$$ 2>/tmp/select1_stderr.$$

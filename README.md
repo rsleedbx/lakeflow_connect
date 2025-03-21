@@ -1,8 +1,8 @@
 To run a demo.
 
-Azure SQL Free and Azure SQL Managed Instance will tried first.
-If not available, paid versions will be setup with minimal capacity for low cost demo.  Adjust to bigger capacity for a performance tests.
-
+[Azure SQL Free](https://devblogs.microsoft.com/azure-sql/new-azure-sql-database-free-offer/) and [Azure SQL Managed Instance Free](https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/free-offer?view=azuresql) are tried first.
+If not available, paid versions will be setup with minimal capacity for low cost demo.
+Adjust to bigger capacity for a performance tests.
 
 # Install CLI
 

@@ -67,7 +67,7 @@ fi
 
 # user password reset on the master if the current password not work
 if [[ -n "$DB_HOST_FQDN" ]] && [[ -z "$(echo "select 1" | sqlcmd -S $DB_HOST_FQDN,${DB_PORT} -U $USER_USERNAME -P $USER_PASSWORD -C -l 60)" ]]; then 
-    cat <<EOF | sqlcmd -S ${DB_HOST_FQDN},${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60 -e
+    cat <<EOF | sqlcmd -S ${DB_HOST_FQDN},${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60
     CREATE LOGIN ${USER_USERNAME} WITH PASSWORD = '${USER_PASSWORD}'
     go
     alter login ${USER_USERNAME} with password = '${USER_PASSWORD}'
@@ -86,6 +86,9 @@ EOF
 fi
 
 # #############################################################################
+
+export az_id=$(az account show | jq -r .id)
+export az_tenantDefaultDomain=$(az account show | jq -r .tenantDefaultDomain)
 
 if [[ -n "${CLOUD_LOCATION}" ]]; then 
     az configure --defaults location="${CLOUD_LOCATION}"
@@ -108,9 +111,6 @@ fi
 az configure --defaults group="${WHOAMI}"
 
 az_group_show_output=$(az group show --resource-group "${WHOAMI}" --output table)
-
-export az_id=$(az account show | jq -r .id)
-export az_tenantDefaultDomain=$(az account show | jq -r .tenantDefaultDomain)
 
 echo "az group ${WHOAMI}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${WHOAMI}/overview"
 echo ""
@@ -197,3 +197,16 @@ echo ""
 # #############################################################################
 echo "Billing : https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis"
 echo ""
+
+
+stop_db() {
+    echo "stop db not required"
+}
+export -f stop_db
+
+delete_db() {
+    echo "az sql ${DB_HOST}: delete started"
+    az sql server delete --name "${DB_HOST}"
+    echo "az sql ${DB_HOST}: delete completed"
+}
+export -f delete_db

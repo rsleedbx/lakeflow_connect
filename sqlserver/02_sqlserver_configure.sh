@@ -3,7 +3,7 @@
 # must be sourced for exports to continue to the next script
 if [ "$0" == "$BASH_SOURCE" ]; then
   echo "Script is being executed directly. Please run as source $0"
-  exit 1
+  return 1
 fi
 
 if [[ -z $DBX_USERNAME ]] || \
@@ -31,7 +31,7 @@ fi
 # connect to master catalog
 echo "select 1" | sqlcmd -S $DB_HOST_FQDN,${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60 >/tmp/select1_stdout.$$ 2>/tmp/select1_stderr.$$
 if [[ $? == 0 ]]; then echo "Connect ok master catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else echo cat /tmp/select1_stdout.$$ /tmp/select1_stderr.$$; exit 1; fi
+else cat /tmp/select1_stdout.$$ /tmp/select1_stderr.$$; return 1; fi
 
 # #############################################################################
 # create user login
@@ -58,7 +58,7 @@ fi
 # connect to master as a user
 echo "select 1" | sqlcmd -S $DB_HOST_FQDN,${DB_PORT} -U "$USER_USERNAME" -P "$USER_PASSWORD" -C -l 60 >/tmp/select1_stdout.$$ 2>/tmp/select1_stderr.$$
 if [[ $? == 0 ]]; then echo "Connect ok master catalog $DB_HOST_FQDN,${DB_PORT} $USER_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; exit 1; fi
+else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 
 # #############################################################################
 # create user in the catalog
@@ -75,7 +75,7 @@ EOF
 # connect to $DB_CATALOG as a user
 echo "select 1" | sqlcmd -S $DB_HOST_FQDN,${DB_PORT} -U "$USER_USERNAME" -P "$USER_PASSWORD" -d "$DB_CATALOG" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
 if [[ $? == 0 ]]; then echo "Connect ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $USER_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; exit 1; fi
+else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 
 # #############################################################################
 
@@ -94,7 +94,7 @@ EOF
 
 echo -e "SET NOCOUNT ON\ngo\n select * from sys.change_tracking_databases where database_id=db_id()" | sqlcmd -S $DB_HOST_FQDN,${DB_PORT} -U "$DBA_USERNAME" -P "$DBA_PASSWORD" -d "$DB_CATALOG" -C -l 60 -h -1  >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
 if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "ct ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; exit 1; fi
+else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 
 # #############################################################################
 
@@ -124,7 +124,7 @@ EOF
 
 echo -e "SET NOCOUNT ON\ngo\n select name, is_cdc_enabled from sys.databases where name=db_name() and is_cdc_enabled=1" | sqlcmd -S $DB_HOST_FQDN,${DB_PORT} -U "$DBA_USERNAME" -P "$DBA_PASSWORD" -d "$DB_CATALOG" -C -l 60 -h -1  >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
 if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "cdc ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; exit 1; fi
+else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 
 
 # #############################################################################
@@ -151,12 +151,12 @@ EOF
 
 echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, schema_name(t.schema_id) TABLE_SCHEM, t.name TABLE_NAME  from sys.change_tracking_tables ctt left join sys.tables t on ctt.object_id = t.object_id where t.schema_id=schema_id('${DB_SCHEMA}')" | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -h -1 >/tmp/select_stdout.$$ 2>/tmp/select_stderr.$$
 if [[ -s /tmp/select_stdout.$$ ]]; then echo "ct ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; exit 1; fi
+else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 
 
 echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, s.name TABLE_SCHEM, t.name as TABLE_NAME from sys.tables t left join sys.schemas s on t.schema_id = s.schema_id where t.is_tracked_by_cdc=1 and t.schema_id=schema_id('${DB_SCHEMA}')" | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -h -1 >/tmp/select_stdout.$$ 2>/tmp/select_stderr.$$
 if [[ -s /tmp/select_stdout.$$ ]]; then echo "cdc ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; exit 1; fi
+else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 
 # #############################################################################
 
@@ -173,8 +173,8 @@ EOF
 
 echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA}].[intpk]" | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -h -1 >/tmp/select_stdout.$$ 2>/tmp/select_stderr.$$
 if [[ -s /tmp/select_stdout.$$ ]]; then echo "intpk ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; exit 1; fi
+else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 
 echo -e "SET NOCOUNT ON\ngo\n select top 1 dt from [${DB_SCHEMA}].[dtix]" | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -h -1 >/tmp/select_stdout.$$ 2>/tmp/select_stderr.$$
 if [[ -s /tmp/select_stdout.$$ ]]; then echo "dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; exit 1; fi
+else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi

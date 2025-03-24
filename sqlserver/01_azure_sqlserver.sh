@@ -79,6 +79,7 @@ export az_sql_server_create_output
 SECRETS_DBA_PASSWORD="$(databricks secrets get-secret ${SECRETS_SCOPE} DBA_PASSWORD 2>/dev/null | jq -r .value | base64 --decode)"
 if [[ "$SECRETS_DBA_PASSWORD" != "$DBA_PASSWORD" ]]; then
     # change the DBA password for case where server was already created
+    echo "az sql server update --name ${DB_HOST} --admin-password"
     az sql server update --name ${DB_HOST} --admin-password "${DBA_PASSWORD}" >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
     if [[ $? == 0 ]]; then
         databricks secrets create-scope ${SECRETS_SCOPE} 2>/dev/null 

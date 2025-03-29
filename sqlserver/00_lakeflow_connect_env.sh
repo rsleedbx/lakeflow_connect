@@ -7,16 +7,17 @@ export REMOVE_AFTER=$(date --date='+0 day' +%Y-%m-%d)
 export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"31m"}
 
 # delete database after sleep
-export DELETE_DB_AFTER_SLEEP=${DELETE_DB_AFTER_SLEEP:-"5m"}    # 61m
+export DELETE_DB_AFTER_SLEEP=${DELETE_DB_AFTER_SLEEP:-"31m"}    # 31m
 
 # delete lakeflow objects after sleep 
-export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"101m"}
+export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"61m"}
 
 # permissive firewall by default.  DO NOT USE WITH PRODUCTION SCHEMA or DATA
 export DB_FIREWALL_CIDRS="${DB_FIREWALL_CIDRS:-"0.0.0.0/0"}"
 
 export CLOUD_LOCATION="${CLOUD_LOCATION:-"East US"}"
 
+export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
 
 # display AZ commands
 AZ() {

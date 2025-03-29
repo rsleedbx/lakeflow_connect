@@ -98,21 +98,13 @@ CONNECTION_ID=$(echo "$conn_output" | jq -r '.connection_id')
 export CONNECTION_ID
 
 # don't delete connection for now
-connection_delete() {
 if [[ -n $CONNECTION_ID ]]; then
     echo "CONNECTION_ID=$CONNECTION_ID"
-    if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-        nohup sleep "${STOP_AFTER_SLEEP}" && databricks connections delete "${CONNECTION_NAME}" >> ~/nohup.out 2>&1 &
-    fi
-    if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then 
-        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks connections delete "${CONNECTION_NAME}" >> ~/nohup.out 2>&1 &
-    fi
     echo "Connection ${CONNECTION_NAME}: ${DATABRICKS_HOST}/explore/connections/${CONNECTION_NAME}"
     echo ""
 else
     echo "Error: CONNECTION_ID not set"
 fi
-}
 
 # #############################################################################
 
@@ -132,19 +124,20 @@ export GATEWAY_PIPELINE_ID
 if [[ -n $GATEWAY_PIPELINE_ID ]]; then
   echo "GATEWAY_PIPELINE_ID=$GATEWAY_PIPELINE_ID"
     if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-        nohup sleep "${STOP_AFTER_SLEEP}" && databricks pipelines stop $GATEWAY_PIPELINE_ID >> ~/nohup.out 2>&1 &
+        nohup sleep "${STOP_AFTER_SLEEP}" && databricks pipelines stop "$GATEWAY_PIPELINE_ID" >> ~/nohup.out 2>&1 &
     fi
     if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks pipelines delete $GATEWAY_PIPELINE_ID >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks pipelines delete "$GATEWAY_PIPELINE_ID"  >> ~/nohup.out 2>&1 &
     fi
-  echo "Gateway ${GATEWAY_PIPELINE_NAME}: ${DATABRICKS_HOST}/pipelines/$GATEWAY_PIPELINE_ID"
-  echo ""
 else
   echo "Error: GATEWAY_PIPELINE_NAME not set"
 fi
 
 # #############################################################################
 
+case "${CDC_CT_MODE}" in 
+"BOTH") 
+echo "enabling replication on the schema"
 ig_output=$(databricks pipelines create --json '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
 "continuous": "true",
@@ -160,21 +153,65 @@ ig_output=$(databricks pipelines create --json '{
     ]
   }
 }')
+;;
+"CT") 
+echo "enabling replication on the intpk table"
+ig_output=$(databricks pipelines create --json '{
+"name": "'"$INGESTION_PIPELINE_NAME"'",
+"continuous": "true",
+"ingestion_definition": {
+  "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
+  "objects": [
+     {"table": {
+        "source_catalog": "'"$DB_CATALOG"'",
+        "source_schema": "'"$DB_SCHEMA"'",
+        "source_table": "intpk",
+        "destination_catalog": "'"$TARGET_CATALOG"'",
+        "destination_schema": "'"$TARGET_SCHEMA"'"
+        }}
+    ]
+  }
+}')
+;;
+"CDC") 
+echo "enabling replication on the dtix table"
+ig_output=$(databricks pipelines create --json '{
+"name": "'"$INGESTION_PIPELINE_NAME"'",
+"continuous": "true",
+"ingestion_definition": {
+  "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
+  "objects": [
+     {"table": {
+        "source_catalog": "'"$DB_CATALOG"'",
+        "source_schema": "'"$DB_SCHEMA"'",
+        "source_table": "dtix",
+        "destination_catalog": "'"$TARGET_CATALOG"'",
+        "destination_schema": "'"$TARGET_SCHEMA"'"
+        }}
+    ]
+  }
+}')
+;;
+*)
+echo "CDC_CT_MODE=${CDC_CT_MODE} must be BOTH|CT|CDC"
+return 1
+;;
+esac
+
 INGESTION_PIPELINE_ID=$(echo "$ig_output" | jq -r '.pipeline_id')
 export INGESTION_PIPELINE_ID
 
-ig_get_output=$(databricks pipelines get $INGESTION_PIPELINE_ID)
+ig_get_output=$(databricks pipelines get "$INGESTION_PIPELINE_ID")
 # print UI URL
 if [[ -n $INGESTION_PIPELINE_ID ]]; then
     echo "INGESTION_PIPELINE_ID=$INGESTION_PIPELINE_ID"
     if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-        nohup sleep "${STOP_AFTER_SLEEP}" && databricks pipelines stop $INGESTION_PIPELINE_ID >> ~/nohup.out 2>&1 &
+        nohup sleep "${STOP_AFTER_SLEEP}" && databricks pipelines stop "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
     fi
     if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks pipelines delete $INGESTION_PIPELINE_ID >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks pipelines delete "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
     fi
     if [[ $(echo "$ig_get_output" | jq -r .spec.continuous) == 'false' ]]; then databricks pipelines start-update "$INGESTION_PIPELINE_ID"; fi  
-    echo "Ingestion ${INGESTION_PIPELINE_NAME}: ${DATABRICKS_HOST}/pipelines/$INGESTION_PIPELINE_ID"  
     echo ""
 else
     echo "Error: INGESTION_PIPELINE_ID not set"
@@ -197,10 +234,10 @@ export INGESTION_JOB_ID
 if [[ -n $INGESTION_JOB_ID ]]; then
     echo "INGESTION_JOB_ID=$INGESTION_JOB_ID"
     if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-        nohup sleep "${STOP_AFTER_SLEEP}" && databricks jobs delete $INGESTION_JOB_ID >> ~/nohup.out 2>&1 &
+        nohup sleep "${STOP_AFTER_SLEEP}" && databricks jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
     fi
     if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks jobs delete $INGESTION_JOB_ID >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
     fi
     if [[ $(echo "$ig_get_output" | jq -r .spec.continuous) == 'false' ]]; then databricks pipelines start-update "$INGESTION_PIPELINE_ID"; fi  
     echo "Job ${INGESTION_PIPELINE_NAME}: ${DATABRICKS_HOST}/jobs/$INGESTION_JOB_ID"   
@@ -225,7 +262,7 @@ jobs_pipelines_permission='{
 
 databricks permissions update pipelines "$GATEWAY_PIPELINE_ID"   --json "$jobs_pipelines_permission" >/dev/null
 databricks permissions update pipelines "$INGESTION_PIPELINE_ID" --json "$jobs_pipelines_permission" >/dev/null
-databricks permissions update jobs       "$INGESTION_JOB_ID"     --json "$jobs_pipelines_permission" >/dev/null
+databricks permissions update jobs      "$INGESTION_JOB_ID"      --json "$jobs_pipelines_permission" >/dev/null
 
 # #############################################################################
 
@@ -242,10 +279,14 @@ go
 EOF
 LOAD_GENERATOR_PID=$!
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    nohup sleep "${STOP_AFTER_SLEEP}" && kill $LOAD_GENERATOR_PID >> ~/nohup.out 2>&1 &
+    nohup sleep "${STOP_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
 fi
 if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && kill $LOAD_GENERATOR_PID >> ~/nohup.out 2>&1 &
+    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
 fi
 echo "Load Generator: started with PID=$LOAD_GENERATOR_PID."
 echo ""
+
+# #############################################################################
+
+databricks pipelines list-pipelines --filter "name like 'robertlee_%'" | jq --arg url "$DATABRICKS_HOST" -r 'sort_by(.name) | .[] | [ .name, .pipeline_id, .state, ($url + "/pipelines/" + .pipeline_id) ] | @tsv'

@@ -30,7 +30,7 @@ fi
 export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"20m"}
 # uncomment if delete is also desired.  
 # Tag will also be created to ensure delete happens via automation in the cloud
-# export DELETE_AFTER_SLEEP=${DELETE_AFTER_SLEEP:-"120m"}
+# export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"120m"}
 # make unique schema, pipelines, job
 NINE_CHAR_ID=$(date +%s | xargs printf "%08x\n") # number of seconds since epoch in hex
 export NINE_CHAR_ID
@@ -54,14 +54,14 @@ export STAGING_SCHEMA=${TARGET_SCHEMA}
 
 # create staging and target schemas
 databricks schemas create "$TARGET_SCHEMA" "$TARGET_CATALOG" >/dev/null
-if [[ -n "${DELETE_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_AFTER_SLEEP}" && databricks schemas delete "$TARGET_CATALOG.$TARGET_SCHEMA" >> ~/nohup.out 2>&1 &
+if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
+    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks schemas delete "$TARGET_CATALOG.$TARGET_SCHEMA" >> ~/nohup.out 2>&1 &
 fi
 
 if [ "$STAGING_CATALOG.$STAGING_SCHEMA" != "$TARGET_CATALOG.$TARGET_SCHEMA" ]; then 
     databricks schemas create "$STAGING_SCHEMA" "$STAGING_CATALOG" >/dev/null
-    if [[ -n "${DELETE_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_AFTER_SLEEP}" && databricks schemas delete "$STAGING_CATALOG.$STAGING_SCHEMA" >> ~/nohup.out 2>&1 &
+    if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
+        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks schemas delete "$STAGING_CATALOG.$STAGING_SCHEMA" >> ~/nohup.out 2>&1 &
     fi
 fi
 
@@ -78,7 +78,7 @@ if [[ -z "$conn_get_output" ]]; then
       "port": "'"$DB_PORT"'",
       "trustServerCertificate": "true",
       "user": "'"$USER_USERNAME"'",
-      "password": "'"$USER_PASSWORD"'"
+      "password": "'"${USER_PASSWORD}"'"
     }
   }')
 else
@@ -89,7 +89,7 @@ else
       "port": "'"$DB_PORT"'",
       "trustServerCertificate": "true",
       "user": "'"$USER_USERNAME"'",
-      "password": "'"$USER_PASSWORD"'"
+      "password": "'"${USER_PASSWORD}"'"
     }
   }')
 fi
@@ -104,8 +104,8 @@ if [[ -n $CONNECTION_ID ]]; then
     if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
         nohup sleep "${STOP_AFTER_SLEEP}" && databricks connections delete "${CONNECTION_NAME}" >> ~/nohup.out 2>&1 &
     fi
-    if [[ -n "${DELETE_AFTER_SLEEP}" ]]; then 
-        nohup sleep "${DELETE_AFTER_SLEEP}" && databricks connections delete "${CONNECTION_NAME}" >> ~/nohup.out 2>&1 &
+    if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then 
+        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks connections delete "${CONNECTION_NAME}" >> ~/nohup.out 2>&1 &
     fi
     echo "Connection ${CONNECTION_NAME}: ${DATABRICKS_HOST}/explore/connections/${CONNECTION_NAME}"
     echo ""
@@ -134,8 +134,8 @@ if [[ -n $GATEWAY_PIPELINE_ID ]]; then
     if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
         nohup sleep "${STOP_AFTER_SLEEP}" && databricks pipelines stop $GATEWAY_PIPELINE_ID >> ~/nohup.out 2>&1 &
     fi
-    if [[ -n "${DELETE_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_AFTER_SLEEP}" && databricks pipelines delete $GATEWAY_PIPELINE_ID >> ~/nohup.out 2>&1 &
+    if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
+        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks pipelines delete $GATEWAY_PIPELINE_ID >> ~/nohup.out 2>&1 &
     fi
   echo "Gateway ${GATEWAY_PIPELINE_NAME}: ${DATABRICKS_HOST}/pipelines/$GATEWAY_PIPELINE_ID"
   echo ""
@@ -170,8 +170,8 @@ if [[ -n $INGESTION_PIPELINE_ID ]]; then
     if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
         nohup sleep "${STOP_AFTER_SLEEP}" && databricks pipelines stop $INGESTION_PIPELINE_ID >> ~/nohup.out 2>&1 &
     fi
-    if [[ -n "${DELETE_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_AFTER_SLEEP}" && databricks pipelines delete $INGESTION_PIPELINE_ID >> ~/nohup.out 2>&1 &
+    if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
+        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks pipelines delete $INGESTION_PIPELINE_ID >> ~/nohup.out 2>&1 &
     fi
     if [[ $(echo "$ig_get_output" | jq -r .spec.continuous) == 'false' ]]; then databricks pipelines start-update "$INGESTION_PIPELINE_ID"; fi  
     echo "Ingestion ${INGESTION_PIPELINE_NAME}: ${DATABRICKS_HOST}/pipelines/$INGESTION_PIPELINE_ID"  
@@ -199,8 +199,8 @@ if [[ -n $INGESTION_JOB_ID ]]; then
     if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
         nohup sleep "${STOP_AFTER_SLEEP}" && databricks jobs delete $INGESTION_JOB_ID >> ~/nohup.out 2>&1 &
     fi
-    if [[ -n "${DELETE_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_AFTER_SLEEP}" && databricks jobs delete $INGESTION_JOB_ID >> ~/nohup.out 2>&1 &
+    if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
+        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks jobs delete $INGESTION_JOB_ID >> ~/nohup.out 2>&1 &
     fi
     if [[ $(echo "$ig_get_output" | jq -r .spec.continuous) == 'false' ]]; then databricks pipelines start-update "$INGESTION_PIPELINE_ID"; fi  
     echo "Job ${INGESTION_PIPELINE_NAME}: ${DATABRICKS_HOST}/jobs/$INGESTION_JOB_ID"   
@@ -244,8 +244,8 @@ LOAD_GENERATOR_PID=$!
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
     nohup sleep "${STOP_AFTER_SLEEP}" && kill $LOAD_GENERATOR_PID >> ~/nohup.out 2>&1 &
 fi
-if [[ -n "${DELETE_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_AFTER_SLEEP}" && kill $LOAD_GENERATOR_PID >> ~/nohup.out 2>&1 &
+if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
+    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && kill $LOAD_GENERATOR_PID >> ~/nohup.out 2>&1 &
 fi
 echo "Load Generator: started with PID=$LOAD_GENERATOR_PID."
 echo ""

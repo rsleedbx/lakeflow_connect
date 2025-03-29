@@ -28,182 +28,190 @@ if [[ -z $DBX_USERNAME ]] || \
     fi
 fi
 
+
 NINE_CHAR_ID=$(date +%s | xargs printf "%08x\n") # number of seconds since epoch in hex
 export NINE_CHAR_ID
 
 # Variable block
 export "randomIdentifier=$NINE_CHAR_ID"
 export CLOUD_LOCATION="${CLOUD_LOCATION:-westus}"   # "East US" required for Freemium
-export resourceGroup="${WHOAMI}"
+export resourceGroup="$RG_NAME"
 export tag="create-managed-instance"
 export vNet="${WHOAMI}-vnet"            #-$randomIdentifier"
 export subnet="${WHOAMI}-subnet"        #-$randomIdentifier"
 export nsg="${WHOAMI}-nsg"              #-$randomIdentifier"
 export route="${WHOAMI}-route"          #-$randomIdentifier"
 
-DB_HOST=${DB_HOST:-${DB_BASENAME}-mi}   # cannot be understore
+if [[ -z "$DB_HOST" ]] || [[ "$DB_HOST" != *"-mi" ]]; then DB_HOST="${DB_BASENAME}-mi"; fi  # cannot be underscore
 DB_PORT=3342
 
-export az_id=$(az account show | jq -r .id)
-export az_tenantDefaultDomain=$(az account show | jq -r .tenantDefaultDomain)
+if [[ -f ./00_az_env.sh ]]; then
+    source ./00_az_env.sh
+else
+    source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/00_az_env.sh)
+fi
+
+start_db() {
+    AZ sql mi start --mi $DB_HOST
+}
+
+stop_db() {
+    AZ sql mi stop --mi $DB_HOST
+}
+
+delete_vnet() {
+    AZ network vnet delete --name $vNet
+    AZ network vnet subnet delete --name $subnet --resource-group $resourceGroup --vnet-name $vNet
+    AZ network nsg delete --name $nsg 
+    AZ network route-table delete --name $route --resource-group $resourceGroup
+}
+
 
 # #############################################################################
 
-az network vnet subnet show --name $subnet --vnet-name $vNet >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-if [[ $? != 0 ]]; then
-    echo "Creating $vNet with $subnet..."
-    az network vnet create --name $vNet --resource-group $resourceGroup --location "$CLOUD_LOCATION" --address-prefixes 10.0.0.0/16 >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? != 0 ]]; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 0; fi
+echo -e "\nCreating network \n"
 
-    az network vnet subnet create --name $subnet --resource-group $resourceGroup --vnet-name $vNet --address-prefixes 10.0.0.0/24 --delegations Microsoft.Sql/managedInstances >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? != 0 ]]; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 0; fi
-else
-    echo "Existing $vNet with $subnet..."
+if ! AZ network vnet subnet show --name $subnet --vnet-name $vNet; then
+    if ! AZ network vnet create --name $vNet --resource-group $resourceGroup --location "$CLOUD_LOCATION" --address-prefixes 10.0.0.0/16; then 
+        cat /tmp/az_stderr.$$; return 1 
+    fi
+
+    if ! AZ network vnet subnet create --name $subnet --resource-group $resourceGroup --vnet-name $vNet --address-prefixes 10.0.0.0/24 --delegations Microsoft.Sql/managedInstances; then 
+        cat /tmp/az_stderr.$$; return 1 
+    fi
 fi
 
- az network nsg rule list --nsg-name $nsg  >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
+AZ network nsg rule list --nsg-name $nsg  
 if [[ $? != 0 ]]; then
-    echo "Creating $nsg..."
-    az network nsg create --name $nsg --resource-group $resourceGroup --location "$CLOUD_LOCATION"  >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? != 0 ]]; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 0; fi
+    AZ network nsg create --name $nsg --resource-group $resourceGroup --location "$CLOUD_LOCATION"  
+    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
 
-    az network nsg rule create --name "allow_management_inbound" --nsg-name $nsg --priority 100 --resource-group $resourceGroup --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges 9000 9003 1438 1440 1452 --direction Inbound --protocol Tcp --source-address-prefixes "*" --source-port-ranges "*"  >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? != 0 ]]; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 0; fi
+    AZ network nsg rule create --name "allow_management_inbound" --nsg-name $nsg --priority 100 --resource-group $resourceGroup --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges 9000 9003 1438 1440 1452 --direction Inbound --protocol Tcp --source-address-prefixes "*" --source-port-ranges "*"  
+    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
 
-    az network nsg rule create --name "allow_misubnet_inbound" --nsg-name $nsg --priority 200 --resource-group $resourceGroup --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Inbound --protocol "*" --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"  >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? != 0 ]]; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 0; fi
+    AZ network nsg rule create --name "allow_misubnet_inbound" --nsg-name $nsg --priority 200 --resource-group $resourceGroup --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Inbound --protocol "*" --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"  
+    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
 
-    az network nsg rule create --name "allow_health_probe_inbound" --nsg-name $nsg --priority 300 --resource-group $resourceGroup --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Inbound --protocol "*" --source-address-prefixes AzureLoadBalancer --source-port-ranges "*"  >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? != 0 ]]; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 0; fi
+    AZ network nsg rule create --name "allow_health_probe_inbound" --nsg-name $nsg --priority 300 --resource-group $resourceGroup --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Inbound --protocol "*" --source-address-prefixes AzureLoadBalancer --source-port-ranges "*"  
+    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
 
-    az network nsg rule create --name "allow_management_outbound" --nsg-name $nsg --priority 1100 --resource-group $resourceGroup --access Allow --destination-address-prefixes AzureCloud --destination-port-ranges 443 12000 --direction Outbound --protocol Tcp --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"  >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? != 0 ]]; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 0; fi
+    AZ network nsg rule create --name "allow_management_outbound" --nsg-name $nsg --priority 1100 --resource-group $resourceGroup --access Allow --destination-address-prefixes AzureCloud --destination-port-ranges 443 12000 --direction Outbound --protocol Tcp --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"  
+    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
 
-    az network nsg rule create --name "allow_misubnet_outbound" --nsg-name $nsg --priority 200 --resource-group $resourceGroup --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Outbound --protocol "*" --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"  >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? != 0 ]]; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 0; fi
-else
-    echo "Existing $nsg..."
+    AZ network nsg rule create --name "allow_misubnet_outbound" --nsg-name $nsg --priority 200 --resource-group $resourceGroup --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Outbound --protocol "*" --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"  
+    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
 fi
 
 
-az network route-table route list --route-table-name $route >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
+AZ network route-table route list --route-table-name $route 
 if [[ $? != 0 ]]; then
-    echo "Creating $route..."
-    az network route-table create --name $route --resource-group $resourceGroup --location "$CLOUD_LOCATION"  >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? != 0 ]]; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 0; fi
+    AZ network route-table create --name $route --resource-group $resourceGroup --location "$CLOUD_LOCATION"  
+    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
 
-    az network route-table route create --address-prefix 0.0.0.0/0 --name "primaryToMIManagementService" --next-hop-type Internet --resource-group $resourceGroup --route-table-name $route  >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? != 0 ]]; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 0; fi
+    AZ network route-table route create --address-prefix 0.0.0.0/0 --name "primaryToMIManagementService" --next-hop-type Internet --resource-group $resourceGroup --route-table-name $route  
+    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
 
-    az network route-table route create --address-prefix 10.0.0.0/24 --name "ToLocalClusterNode" --next-hop-type VnetLocal --resource-group $resourceGroup --route-table-name $route  >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? != 0 ]]; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 0; fi
+    AZ network route-table route create --address-prefix 10.0.0.0/24 --name "ToLocalClusterNode" --next-hop-type VnetLocal --resource-group $resourceGroup --route-table-name $route  
+    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
 
-    echo "Configuring $subnet with $nsg and $route..."
-    az network vnet subnet update --name $subnet --network-security-group $nsg --route-table $route --vnet-name $vNet --resource-group $resourceGroup  >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? != 0 ]]; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 0; fi
-else
-    echo "Existing $route..."
+    AZ network vnet subnet update --name $subnet --network-security-group $nsg --route-table $route --vnet-name $vNet --resource-group $resourceGroup  
+    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
 fi
 
 # #############################################################################
 
 # Freemium plan https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/free-offer?view=azuresql
 
-az sql mi show --name ${DB_HOST} >/tmp/az_stdout.$$ 2>/tmp/az_stdout.$$
-if [[ $? != 0 ]]; then
+echo -e "\nCreating sql managed instance (could take 15 min)\n"
+
+DB_HOST_CREATED=""
+if ! AZ sql mi show --name ${DB_HOST}; then
     # This step will take awhile to complete. You can monitor deployment progress in the activity log within the Azure portal.
     # freemium requires --storage 64
-    echo "az sql mi ${DB_HOST}: trying --pricing-model Freemium"
-    az sql mi create --admin-password $DBA_PASSWORD --admin-user $DBA_USERNAME --name $DB_HOST --resource-group $resourceGroup --subnet $subnet --vnet-name $vNet --location "$CLOUD_LOCATION"  -e GeneralPurpose -f Gen5 -c 4 --public-data-endpoint-enabled true --zone-redundant false --pricing-model Freemium --storage 64  --backup-storage-redundancy Local >/tmp/az_sql_mi_create_stdout.$$ 2>/tmp/az_sql_mi_create_stderr.$$
- 
-    # freemium failed.  create regular 
-    if [[ $? != 0 ]]; then
-        echo "az sql mi ${DB_HOST}: trying paid"
-        az sql mi create --admin-password $DBA_PASSWORD --admin-user $DBA_USERNAME --name $DB_HOST --resource-group $resourceGroup --subnet $subnet --vnet-name $vNet --location "$CLOUD_LOCATION"  -e GeneralPurpose -f Gen5 -c 4 --public-data-endpoint-enabled true --zone-redundant false --storage 64 --backup-storage-redundancy Local >/tmp/az_sql_mi_create_stdout.$$ 2>/tmp/az_sql_mi_create_stderr.$$
-    fi
-    if [[ $? == 0 ]]; then
-        echo "az mi db ${DB_HOST}: created" 
-    else
-        echo "az mi db ${DB_HOST}: failed."
-        cat /tmp/az_sql_mi_create_stdout.$$ /tmp/az_sql_mi_create_stderr.$$
-        if [ "$0" == "$BASH_SOURCE" ]; then return 1; else return 1; fi
-    fi
+    echo -e "AZ sql mi ${DB_HOST}: trying --pricing-model Freemium \n"
 
+    if ! AZ sql mi create --admin-password $DBA_PASSWORD --admin-user $DBA_USERNAME --name $DB_HOST --resource-group $resourceGroup --subnet $subnet --vnet-name $vNet --location "$CLOUD_LOCATION"  -e GeneralPurpose -f Gen5 -c 4 --public-data-endpoint-enabled true --zone-redundant false --pricing-model Freemium --storage 64  --backup-storage-redundancy Local ; then
+
+        echo -e "AZ sql mi ${DB_HOST}: trying paid \n"
+
+        if ! AZ sql mi create --admin-password $DBA_PASSWORD --admin-user $DBA_USERNAME --name $DB_HOST --resource-group $resourceGroup --subnet $subnet --vnet-name $vNet --location "$CLOUD_LOCATION"  -e GeneralPurpose -f Gen5 -c 4 --public-data-endpoint-enabled true --zone-redundant false --storage 64 --backup-storage-redundancy Local ; then
+            cat /tmp/az_stderr.$$
+            return 1
+        fi
+    fi
+    if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql mi delete -y -n "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+    fi
+    DB_HOST_CREATED=1
 else
-    echo "az sql mi ${DB_HOST}: exists"
+    echo "AZ sql mi ${DB_HOST}: exists"
 fi
 
-# update password save to secrets
-SECRETS_DBA_PASSWORD="$(databricks secrets get-secret ${SECRETS_SCOPE} DBA_PASSWORD 2>/dev/null | jq -r .value | base64 --decode)"
-if [[ "$SECRETS_DBA_PASSWORD" != "$DBA_PASSWORD" ]]; then
-    echo "az sql mi update --admin-password"
-    az sql mi update --admin-password $DBA_PASSWORD --name $DB_HOST --resource-group $resourceGroup --subnet $subnet --vnet-name $vNet >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? == 0 ]]; then
-        databricks secrets create-scope ${SECRETS_SCOPE} 2>/dev/null 
-        databricks secrets put-secret ${SECRETS_SCOPE} DBA_PASSWORD --string-value "${DBA_PASSWORD}"
-        databricks secrets put-secret ${SECRETS_SCOPE} DBA_USERNAME --string-value "${DBA_USERNAME}"
-    else
-        echo "az sql mi update --admin-password failed"
-        if [ "$0" == "$BASH_SOURCE" ]; then return 1; else return 1; fi
-    fi
+read_fqdn_dba_if_host
+set_mi_fqdn_dba_host
+if [[ "$(jq -r '.state' /tmp/az_stdout.$$)" != "Ready" ]]; then
+    start_db
 fi
 
-export DB_HOST_FQDN=$(cat /tmp/az_stdout.$$ | jq -r .fullyQualifiedDomainName | sed "s/^${DB_HOST}\./${DB_HOST}\.public\./g")
-
-echo "az sql mi ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${WHOAMI}/providers/Microsoft.Sql/managedInstances/${DB_HOST}/overview"
-
-az configure --defaults managed-instance=$DB_HOST
+AZ configure --defaults managed-instance=$DB_HOST
 echo ""
+
+echo "AZ sql mi ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/managedInstances/${DB_HOST}/overview"
+
 
 # #############################################################################
 
-az sql midb show --name ${DB_CATALOG} --managed-instance "${DB_HOST}" --output table >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-if [[ $? != 0 ]]; then
-    az sql midb create -g $resourceGroup --mi $DB_HOST -n $DB_CATALOG --collation Latin1_General_100_CS_AS_SC
+echo -e "\nCreating catalog\n" 
 
-    az configure --defaults managed-instance=$DB_HOST
-    if [[ $? == 0 ]]; then
-        echo "az sql midb ${DB_CATALOG}: created" 
-    else
-        echo "az sql midb ${DB_CATALOG}: failed."
-        cat /tmp/az_sql_mi_create_stdout.$$ /tmp/az_sql_mi_create_stderr.$$
-        if [ "$0" == "$BASH_SOURCE" ]; then return 1; else return 1; fi
+if ! AZ sql midb show --name ${DB_CATALOG} --mi "${DB_HOST}"; then 
+    if ! AZ sql midb create -g $resourceGroup --mi $DB_HOST -n $DB_CATALOG --collation Latin1_General_100_CS_AS_SC; then
+        cat /tmp/az_stderr.$$
+        return 1
     fi
+    if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql midb delete -y -n "${DB_CATALOG}" --mi "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+    fi    
 else
-    echo "az sql midb ${DB_CATALOG}: exists"
+    echo "AZ sql midb ${DB_CATALOG}: exists"
 fi
 
-echo "az sql midb ${DB_CATALOG}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${WHOAMI}/providers/Microsoft.Sql/managedInstances/${DB_HOST}/databases/${DB_CATALOG}/overview"
-echo ""
-
-start_db() {
-    az sql mi start --mi $DB_HOST
-}
-
-stop_db() {
-    az sql mi stop --mi $DB_HOST
-}
-
-delete_vnet() {
-    az network vnet delete --name $vNet
-    az network vnet subnet delete --name $subnet --resource-group $resourceGroup --vnet-name $vNet
-    az network nsg delete --name $nsg 
-    az network route-table delete --name $route --resource-group $resourceGroup
-}
+echo -e "AZ sql midb ${DB_CATALOG}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/managedInstances/${DB_HOST}/databases/${DB_CATALOG}/overview \n"
 
 # #############################################################################
 
 # Run firewall rules before coming here
-az network nsg rule show --name "allow_dbx_inbound" --nsg-name $nsg >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-if [[ $? != 0 ]]; then
-    echo "az network nsg rule create --name "allow_dbx_inbound" --nsg-name $nsg: MAKE SURE TO CONFIGURE FIREWALL RULES"
-else
-    echo "az network nsg rule --name "allow_dbx_inbound" --nsg-name $nsg: exists"
+
+echo -e "Creating permissive firewall rules \n"
+
+if ! AZ network nsg rule show --name "0_0_0_0_0" --nsg-name $nsg ; then
+    if ! AZ network nsg rule create --name "0_0_0_0_0" --nsg-name $nsg \
+        --source-address-prefixes "${DB_FIREWALL_CIDRS[*]}" \
+        --priority 151 --access Allow  --source-port-ranges "*" \
+        --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges 1433 3342 --direction Inbound --protocol Tcp ; then    
+        cat /tmp/az_stderr.$$
+        return 1
+    fi
 fi
 
-echo "az sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${WHOAMI}/providers/Microsoft.Network/networkSecurityGroups/${nsg}/overview"
-echo ""
+echo -e "AZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/servers/${DB_HOST}/networking \n"
 
 # #############################################################################
-echo "Billing : https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis"
-echo ""
+# Check password
+
+echo -e "\nValidate root password.  Could take 5min if resetting\n"
+
+if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
+    if [[ "$DB_HOST_CREATED" ]]; then
+        return 1;
+    fi
+    if ! AZ sql mi update --name ${DB_HOST} --admin-password "${DBA_PASSWORD}" ; then
+        cat /tmp/az_stderr.$$
+        return 1    
+    fi
+    if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
+        cat /tmp/az_stderr.$$; return 1;
+    fi
+fi
+
+# #############################################################################
+echo -e "Billing : https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis \n"

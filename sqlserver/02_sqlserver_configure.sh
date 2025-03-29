@@ -29,9 +29,9 @@ fi
 # #############################################################################
 
 # connect to master catalog
-echo "select 1" | sqlcmd -S $DB_HOST_FQDN,${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60 >/tmp/select1_stdout.$$ 2>/tmp/select1_stderr.$$
-if [[ $? == 0 ]]; then echo "Connect ok master catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/select1_stdout.$$ /tmp/select1_stderr.$$; return 1; fi
+if ! test_db_connect "$DBA_USERNAME" "$DBA_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
+    cat /tmp/select1_stdout.$$ /tmp/select1_stderr.$$; return 1;
+fi    
 
 # #############################################################################
 # create user login
@@ -46,19 +46,10 @@ CREATE USER ${USER_USERNAME} FOR LOGIN ${USER_USERNAME} WITH DEFAULT_SCHEMA=dbo
 go
 EOF
 
-# update password save to secrets
-SECRETS_USER_PASSWORD="$(databricks secrets get-secret ${SECRETS_SCOPE} USER_PASSWORD 2>/dev/null | jq -r .value | base64 --decode)"
-if [[ "$SECRETS_USER_PASSWORD" != "$USER_PASSWORD" ]]; then
-    echo "Updating secrets ${SECRETS_SCOPE}"
-    databricks secrets create-scope ${SECRETS_SCOPE} 2>/dev/null 
-    databricks secrets put-secret ${SECRETS_SCOPE} USER_PASSWORD --string-value "${USER_PASSWORD}"
-    databricks secrets put-secret ${SECRETS_SCOPE} USER_USERNAME --string-value "${USER_USERNAME}"
-fi
-
 # connect to master as a user
-echo "select 1" | sqlcmd -S $DB_HOST_FQDN,${DB_PORT} -U "$USER_USERNAME" -P "$USER_PASSWORD" -C -l 60 >/tmp/select1_stdout.$$ 2>/tmp/select1_stderr.$$
-if [[ $? == 0 ]]; then echo "Connect ok master catalog $DB_HOST_FQDN,${DB_PORT} $USER_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
+if ! test_db_connect "$USER_USERNAME" "$USER_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
+    cat /tmp/select1_stdout.$$ /tmp/select1_stderr.$$; return 1;
+fi   
 
 # #############################################################################
 # create user in the catalog
@@ -73,9 +64,9 @@ go
 EOF
 
 # connect to $DB_CATALOG as a user
-echo "select 1" | sqlcmd -S $DB_HOST_FQDN,${DB_PORT} -U "$USER_USERNAME" -P "$USER_PASSWORD" -d "$DB_CATALOG" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
-if [[ $? == 0 ]]; then echo "Connect ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $USER_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
+if ! test_db_connect "$USER_USERNAME" "$USER_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG"; then
+    cat /tmp/select1_stdout.$$ /tmp/select1_stderr.$$; return 1;
+fi   
 
 # #############################################################################
 

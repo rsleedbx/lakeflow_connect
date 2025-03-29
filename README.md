@@ -19,7 +19,7 @@ Adjust to bigger capacity for a performance tests.
 
     ```bash
     brew tap microsoft/mssql-release
-    brew install pwgen mssql-tools mysql-client libpq
+    brew install pwgen ipcalc mssql-tools mysql-client libpq
     ```
 
 - Install Databricks CLI.  Enter profile DEFAULT and host workspace. 

@@ -182,7 +182,7 @@ esac
 # #############################################################################
 
 case "${CDC_CT_MODE}" in 
-"BOTH") 
+"BOTH"|"CDC") 
     if [[ -f ./ddl_support_objects.sql ]]; then
     cat ./ddl_support_objects.sql | \
     sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
@@ -229,6 +229,8 @@ else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 
 fi
 
+
+
 if [[ "${CDC_CT_MODE}" =~ ^(BOTH|CDC)$  ]]; then 
 
 cat <<EOF | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
@@ -243,34 +245,44 @@ if [[ -s /tmp/select_stdout.$$ ]]; then echo "cdc table ok $DB_SCHEMA schema $DB
 else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 
 fi
+
+# drop the table won't be used in the test
+
+if [[ "${CDC_CT_MODE}" =~ ^(CDC)$  ]]; then 
+cat <<EOF | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
+IF OBJECT_ID(N'${DB_SCHEMA}.intpx', N'U') IS NOT NULL
+    drop table [${DB_SCHEMA}].[intpk]
+go
+EOF
+fi
+
+if [[ "${CDC_CT_MODE}" =~ ^(CT)$  ]]; then 
+cat <<EOF | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
+IF OBJECT_ID(N'${DB_SCHEMA}.dtix', N'U') IS NOT NULL
+    drop table [${DB_SCHEMA}].[dtix]
+go
+EOF
+fi
+
 # #############################################################################
 
-if [[ "${CDC_CT_MODE}" =~ ^(BOTH|CT)$  ]]; then 
-
 cat <<EOF | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
-insert into [${DB_SCHEMA}].[intpk] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
+IF OBJECT_ID(N'${DB_SCHEMA}.intpx', N'U') IS NOT NULL
+    insert into [${DB_SCHEMA}].[intpk] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
 go
-insert into [${DB_SCHEMA}].[dtix] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)
-go
-delete from [${DB_SCHEMA}].[intpk] where pk=(select min(pk) from [${DB_SCHEMA}].[intpk])
+IF OBJECT_ID(N'${DB_SCHEMA}.dtix', N'U') IS NOT NULL
+    insert into [${DB_SCHEMA}].[dtix] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)
 go
 EOF
 
-echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA}].[intpk]" | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -h -1 >/tmp/select_stdout.$$ 2>/tmp/select_stderr.$$
-if [[ -s /tmp/select_stdout.$$ ]]; then echo "intpk ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
-
+if [[ "${CDC_CT_MODE}" =~ ^(BOTH|CT)$  ]]; then 
+    echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA}].[intpk]" | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -h -1 >/tmp/select_stdout.$$ 2>/tmp/select_stderr.$$
+    if [[ -s /tmp/select_stdout.$$ ]]; then echo "intpk ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
+    else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 fi
 
 if [[ "${CDC_CT_MODE}" =~ ^(BOTH|CDC)$  ]]; then 
-
-cat <<EOF | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
-update [${DB_SCHEMA}].[intpk] set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from [${DB_SCHEMA}].[intpk])
-go
-EOF
-
-echo -e "SET NOCOUNT ON\ngo\n select top 1 dt from [${DB_SCHEMA}].[dtix]" | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -h -1 >/tmp/select_stdout.$$ 2>/tmp/select_stderr.$$
-if [[ -s /tmp/select_stdout.$$ ]]; then echo "dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
-
+    echo -e "SET NOCOUNT ON\ngo\n select top 1 dt from [${DB_SCHEMA}].[dtix]" | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -h -1 >/tmp/select_stdout.$$ 2>/tmp/select_stderr.$$
+    if [[ -s /tmp/select_stdout.$$ ]]; then echo "dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
+    else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 fi

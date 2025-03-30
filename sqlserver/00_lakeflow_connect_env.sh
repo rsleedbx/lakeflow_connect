@@ -38,7 +38,10 @@ AZ() {
 
 DBX() {
 local rc
-    echo -n databricks "${@}"
+    PWMASK="$@"
+    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
+    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+    echo -n databricks "${PWMASK}"
     databricks "$@" >/tmp/dbx_stdout.$$ 2>/tmp/dbx_stderr.$$
     rc=$?
     if [[ "$rc" != "0" ]]; then

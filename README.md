@@ -99,9 +99,8 @@ source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect
 
 # Find the passwords saved env and Databricks secrets
 ```
-echo $DBA_PASSWORD, $DBA_USERNAME
-echo $USER_PASSWORD, $USER_USERNAME
-databricks secrets list-secrets $SECRETS_SCOPE
-databricks secrets get-secret $SECRETS_SCOPE DBA_PASSWORD   
-databricks secrets get-secret $SECRETS_SCOPE DBA_PASSWORD | jq -r .value | base64 --decode  
+echo "$DBA_USERNAME:$DBA_PASSWORD" 
+echo "$USER_USERNAME"$USER_PASSWORD"
+echo "$DBA_USERNAME@$DB_HOST_FQDN:$DB_PORT/master"
+echo "$USER_USERNAME@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG"
 ```

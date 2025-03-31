@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# error out when undeclared variable is used
+set -u 
+
 # must be sourced for exports to continue to the next script
 if [ "$0" == "$BASH_SOURCE" ]; then
   echo "Script is being executed directly. Please run as source $0"
@@ -8,26 +11,28 @@ fi
 
 export AZ_DB_TYPE=zmi
 
-if [[ -z $DBX_USERNAME ]] || \
- [[ -z $WHOAMI ]] || \
- [[ -z $EXPIRE_DATE ]] || \
- [[ -z $DB_CATALOG ]] || \
- [[ -z $DB_SCHEMA ]] || \
- [[ -z $DB_HOST ]] || \
- [[ -z $DB_PORT ]] || \
- [[ -z $DBA_PASSWORD ]] || \
- [[ -z $USER_PASSWORD ]] || \
- [[ -z $DBA_USERNAME ]] || \
- [[ -z $USER_USERNAME ]] || \
- [[ -z $DB_HOST ]] || \
- [[ -z $DB_HOST_FQDN ]]; then 
-    if [[ -f ./00_lakeflow_connect_env.sh ]]; then
-        source ./00_lakeflow_connect_env.sh
+# #############################################################################
+# check if sql server if exists
+if [[ -z "$DB_HOST" || "$DB_HOST" != *"$-mi" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zmi" ]]; then
+    if AZ sql mi list --resource-group "${RG_NAME}"; then
+        read -rd "\n" DB_HOST DB_HOST_FQDN DBA_USERNAME <<< "$(read_fqdn_dba_if_host)"
+        export DB_HOST 
+        export DB_HOST_FQDN 
+        export DBA_USERNAME         
+        read -rd "\n" DB_HOST_FQDN                      <<< "$(set_mi_fqdn_dba_host)"
+        export DB_PORT=3342
+    fi
+    if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && AZ sql midb list --mi "$DB_HOST" --resource-group "${RG_NAME}"; then
+        echo "DB_CATALOG not set. checking az sql db list"
+        DB_CATALOG="$(jq -r 'first(.[] | select(.name != "master") | .name)' /tmp/az_stdout.$$)"
+        export DB_CATALOG
     else
-        source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/00_lakeflow_connect_env.sh)
+        DB_CATALOG="$CATALOG_BASENAME"
+    fi
+    if [[ -n "$DB_HOST" ]]; then
+        echo "az sql mi: $DB_HOST $DBA_USERNAME@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG"
     fi
 fi
-
 
 NINE_CHAR_ID=$(date +%s | xargs printf "%08x\n") # number of seconds since epoch in hex
 export NINE_CHAR_ID
@@ -45,25 +50,19 @@ export route="${WHOAMI}-route"          #-$randomIdentifier"
 if [[ -z "$DB_HOST" ]] || [[ "$DB_HOST" != *"-mi" ]]; then DB_HOST="${DB_BASENAME}-mi"; fi  # cannot be underscore
 DB_PORT=3342
 
-if [[ -f ./00_az_env.sh ]]; then
-    source ./00_az_env.sh
-else
-    source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/00_az_env.sh)
-fi
-
 start_db() {
-    AZ sql mi start --mi $DB_HOST
+    AZ sql mi start --mi "$DB_HOST"
 }
 
 stop_db() {
-    AZ sql mi stop --mi $DB_HOST
+    AZ sql mi stop --mi "$DB_HOST"
 }
 
 delete_vnet() {
-    AZ network vnet delete --name $vNet
-    AZ network vnet subnet delete --name $subnet --resource-group $resourceGroup --vnet-name $vNet
-    AZ network nsg delete --name $nsg 
-    AZ network route-table delete --name $route --resource-group $resourceGroup
+    AZ network vnet delete --name "$vNet"
+    AZ network vnet subnet delete --name "$subnet" --resource-group "$resourceGroup" --vnet-name "$vNet"
+    AZ network nsg delete --name "$nsg" 
+    AZ network route-table delete --name "$route" --resource-group "$resourceGroup"
 }
 
 
@@ -139,18 +138,21 @@ if ! AZ sql mi show --name ${DB_HOST}; then
             return 1
         fi
     fi
-    if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql mi delete -y -n "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
-    fi
     DB_HOST_CREATED=1
+    if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
+        sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql mi delete -y -n "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+    fi
 else
     echo "AZ sql mi ${DB_HOST}: exists"
 fi
 
-read_fqdn_dba_if_host
-set_mi_fqdn_dba_host
+read -rd "\n" DB_HOST DB_HOST_FQDN DBA_USERNAME <<< "$(read_fqdn_dba_if_host)"
+read -rd "\n" DB_HOST_FQDN                      <<< "$(set_mi_fqdn_dba_host)"
 if [[ "$(jq -r '.state' /tmp/az_stdout.$$)" != "Ready" ]]; then
-    start_db
+    if ! start_db; then
+        cat /tmp/az_stderr.$$
+        return 1
+    fi
 fi
 
 AZ configure --defaults managed-instance=$DB_HOST
@@ -169,7 +171,7 @@ if ! AZ sql midb show --name ${DB_CATALOG} --mi "${DB_HOST}"; then
         return 1
     fi
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql midb delete -y -n "${DB_CATALOG}" --mi "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql midb delete -y -n "${DB_CATALOG}" --mi "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
     fi    
 else
     echo "AZ sql midb ${DB_CATALOG}: exists"
@@ -198,7 +200,7 @@ echo -e "AZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az
 # #############################################################################
 # Check password
 
-echo -e "\nValidate root password.  Could take 5min if resetting\n"
+echo -e "\nValidate or reset root password.  Could take 5min if resetting\n"
 
 if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
     if [[ "$DB_HOST_CREATED" ]]; then

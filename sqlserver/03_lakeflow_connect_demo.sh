@@ -1,29 +1,12 @@
 #!/usr/bin/env bash
 
+# error out when undeclared variable is used
+set -u 
+
 # must be sourced for exports to continue to the next script
 if [ "$0" == "$BASH_SOURCE" ]; then
   echo "Script is being executed directly. Please run as source $0"
   exit 1
-fi
-
-if [[ -z $DBX_USERNAME ]] || \
- [[ -z $WHOAMI ]] || \
- [[ -z $EXPIRE_DATE ]] || \
- [[ -z $DB_CATALOG ]] || \
- [[ -z $DB_SCHEMA ]] || \
- [[ -z $DB_HOST ]] || \
- [[ -z $DB_PORT ]] || \
- [[ -z $DBA_PASSWORD ]] || \
- [[ -z $USER_PASSWORD ]] || \
- [[ -z $DBA_USERNAME ]] || \
- [[ -z $USER_USERNAME ]] || \
- [[ -z $DB_HOST ]] || \
- [[ -z $DB_HOST_FQDN ]]; then 
-    if [[ -f ./00_lakeflow_connect_env.sh ]]; then
-        source ./00_lakeflow_connect_env.sh
-    else
-        source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/00_lakeflow_connect_env.sh)
-    fi
 fi
 
 # stop the resource after this 1s 1m 1h ...
@@ -35,7 +18,8 @@ export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"20m"}
 NINE_CHAR_ID=$(date +%s | xargs printf "%08x\n") # number of seconds since epoch in hex
 export NINE_CHAR_ID
 # databricks URL
-DATABRICKS_HOST=$(databricks auth env | jq -r .env.DATABRICKS_HOST)
+if ! DBX auth env; then cat /tmp/dbx_stderr.$$; return 1; fi
+DATABRICKS_HOST=$(jq -r .env.DATABRICKS_HOST /tmp/dbx_stdout.$$)
 export DATABRICKS_HOST
 # used for connection
 CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST_FQDN}_${USER_USERNAME}" | tr [.@] _)
@@ -60,7 +44,7 @@ if ! DBX schemas get "$TARGET_CATALOG.$TARGET_SCHEMA"; then
         return 1
     fi
     if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$TARGET_CATALOG.$TARGET_SCHEMA" >> ~/nohup.out 2>&1 &
+        sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$TARGET_CATALOG.$TARGET_SCHEMA" >> ~/nohup.out 2>&1 &
     fi
 fi
 
@@ -70,7 +54,7 @@ if [[ "$TARGET_CATALOG.$TARGET_SCHEMA" != "$STAGING_CATALOG.$STAGING_SCHEMA" ]] 
         return 1
     fi
     if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$STAGING_CATALOG.$STAGING_SCHEMA" >> ~/nohup.out 2>&1 &
+        sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$STAGING_CATALOG.$STAGING_SCHEMA" >> ~/nohup.out 2>&1 &
     fi
 fi
 
@@ -95,7 +79,7 @@ if ! DBX connections get "$CONNECTION_NAME"; then
         return 1
     fi
     if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
+        sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
     fi
 else
   # in case password is updated
@@ -135,10 +119,10 @@ GATEWAY_PIPELINE_ID="$(jq -r '.pipeline_id' /tmp/dbx_stdout.$$)"
 export GATEWAY_PIPELINE_ID
 
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    nohup sleep "${STOP_AFTER_SLEEP}" && databricks pipelines stop "$GATEWAY_PIPELINE_ID" >> ~/nohup.out 2>&1 &
+    sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$GATEWAY_PIPELINE_ID" >> ~/nohup.out 2>&1 &
 fi
 if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks pipelines delete "$GATEWAY_PIPELINE_ID"  >> ~/nohup.out 2>&1 &
+    sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$GATEWAY_PIPELINE_ID"  >> ~/nohup.out 2>&1 &
 fi
 
 # #############################################################################
@@ -225,10 +209,10 @@ export INGESTION_PIPELINE_CONTINUOUS
 
 
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
+    sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
 fi
 if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
+    sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
 fi
 
 # start if not cont
@@ -259,10 +243,10 @@ export INGESTION_JOB_ID
 
 # print UI URL
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    nohup sleep "${STOP_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
+    sleep "${STOP_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
 fi
-if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
+if [[ -z "${STOP_AFTER_SLEEP}" ]] && [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
+    sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
 fi
 
 
@@ -270,25 +254,15 @@ fi
 
 echo -e "\nPermission Gateway, Ingestion, Jobs for debug \n"
 
-jobs_pipelines_permission='{
-"access_control_list": [
-    {
-        "user_name": "'"$DBX_USERNAME"'",
-        "permission_level": "IS_OWNER"
-    },
-    {
-        "group_name": "users",
-        "permission_level": "CAN_MANAGE"
-    }
-]}'
+jobs_pipelines_permission='{"access_control_list": [{"user_name": "'"$DBX_USERNAME"'","permission_level": "IS_OWNER"},{"group_name": "users","permission_level": "CAN_MANAGE"}]}'
 
-databricks permissions update pipelines "$GATEWAY_PIPELINE_ID"   --json "$jobs_pipelines_permission" >/dev/null
-databricks permissions update pipelines "$INGESTION_PIPELINE_ID" --json "$jobs_pipelines_permission" >/dev/null
-databricks permissions update jobs      "$INGESTION_JOB_ID"      --json "$jobs_pipelines_permission" >/dev/null
+if ! DBX permissions update pipelines "$GATEWAY_PIPELINE_ID"   --json "$jobs_pipelines_permission"; then cat /tmp/dbx_stderr.$$; return 1; fi 
+if ! DBX permissions update pipelines "$INGESTION_PIPELINE_ID" --json "$jobs_pipelines_permission"; then cat /tmp/dbx_stderr.$$; return 1; fi  
+if ! DBX permissions update jobs      "$INGESTION_JOB_ID"      --json "$jobs_pipelines_permission"; then cat /tmp/dbx_stderr.$$; return 1; fi  
 
 # #############################################################################
 
-echo -e "\Start workload \n"
+echo -e "\n Start workload \n"
 
 cat <<EOF | sqlcmd -d "${DB_CATALOG}" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -e >/dev/null 2>&1 &
 while ( 1 = 1 )
@@ -308,21 +282,22 @@ EOF
 
 LOAD_GENERATOR_PID=$!
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    nohup sleep "${STOP_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
+    sleep "${STOP_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
 fi
-if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
+if [[ -z "${STOP_AFTER_SLEEP}" ]] && [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
+    sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
 fi
 echo "Load Generator: started with PID=$LOAD_GENERATOR_PID."
 echo ""
 
 # #############################################################################
 
-echo -e "\n Click on UI \n"
+echo -e "\nClick on UI \n"
 
-echo -e "Staging schema ${DATABRICKS_HOST}/explore/data/${STAGING_CATALOG}/${STAGING_SCHEMA}"
-echo -e "Target schema ${DATABRICKS_HOST}/explore/data/${TARGET_CATALOG}/${TARGET_SCHEMA}"
-echo -e "Connection ${CONNECTION_NAME}: ${DATABRICKS_HOST}/explore/connections/${CONNECTION_NAME}"
-echo -e "Job ${INGESTION_PIPELINE_NAME}: ${DATABRICKS_HOST}/jobs/$INGESTION_JOB_ID \n"   
+echo -e "Staging schema: ${DATABRICKS_HOST}/explore/data/${STAGING_CATALOG}/${STAGING_SCHEMA}"
+echo -e "Target schema : ${DATABRICKS_HOST}/explore/data/${TARGET_CATALOG}/${TARGET_SCHEMA}"
+echo -e "Connection    : ${DATABRICKS_HOST}/explore/connections/${CONNECTION_NAME}"
+echo -e "Job           : ${DATABRICKS_HOST}/jobs/$INGESTION_JOB_ID \n"   
 
-databricks pipelines list-pipelines --filter "name like 'robertlee_%'" | jq --arg url "$DATABRICKS_HOST" -r 'sort_by(.name) | .[] | [ .name, .pipeline_id, .state, ($url + "/pipelines/" + .pipeline_id) ] | @tsv'
+if ! DBX pipelines list-pipelines --filter "name like 'robertlee_%'"; then cat /tmp/dbx_stderr.$$; return 1; fi
+jq --arg url "$DATABRICKS_HOST" -r 'sort_by(.name) | .[] | [ .name, .pipeline_id, .state, ($url + "/pipelines/" + .pipeline_id) ] | @tsv' /tmp/dbx_stdout.$$ 

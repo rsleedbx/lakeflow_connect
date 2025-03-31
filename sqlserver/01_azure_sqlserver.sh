@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# error out when undeclared variable is used
+set -u 
+
 # must be sourced for exports to continue to the next script
 if [ "$0" == "$BASH_SOURCE" ]; then
   echo "Script is being executed directly. Please run as source $0"
@@ -8,47 +11,49 @@ fi
 
 export AZ_DB_TYPE=zsql
 
-if [[ -z $DBX_USERNAME ]] || \
- [[ -z $WHOAMI ]] || \
- [[ -z $EXPIRE_DATE ]] || \
- [[ -z $DB_CATALOG ]] || \
- [[ -z $DB_SCHEMA ]] || \
- [[ -z "${DB_HOST}" ]] || \
- [[ -z $DB_PORT ]] || \
- [[ -z "${DBA_PASSWORD}" ]] || \
- [[ -z "${USER_PASSWORD}" ]] || \
- [[ -z $DBA_USERNAME ]] || \
- [[ -z $USER_USERNAME ]] || \
- [[ -z $DB_HOST_FQDN ]]; then 
-    if [[ -f ./00_lakeflow_connect_env.sh ]]; then
-        source ./00_lakeflow_connect_env.sh
+# #############################################################################
+# check if sql server if exists
+if [[ -z "$DB_HOST" || "$DB_HOST" != *"-sq" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zsql" ]]; then
+    if AZ sql server list --resource-group "${RG_NAME}"; then
+        read -rd "\n" DB_HOST DB_HOST_FQDN DBA_USERNAME <<< "$(read_fqdn_dba_if_host)"
+        export DB_HOST 
+        export DB_HOST_FQDN 
+        export DBA_USERNAME 
+        export DB_PORT=1433
+    fi
+    if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && AZ sql db list -s "$DB_HOST" --resource-group "${RG_NAME}"; then
+        DB_CATALOG="$(jq -r 'first(.[] | select(.name != "master") | .name)' /tmp/az_stdout.$$)"
+        export DB_CATALOG
     else
-        source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/00_lakeflow_connect_env.sh)
+        DB_CATALOG="$CATALOG_BASENAME"
+    fi
+    if [[ -n "$DB_HOST" ]]; then
+        echo "az sql server: $DB_HOST $DBA_USERNAME@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG"
     fi
 fi
 
-if [[ -f ./00_az_env.sh ]]; then
-    source ./00_az_env.sh
-else
-    source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/00_az_env.sh)
-fi
+if [[ -z "$DB_HOST" ]] || [[ "$DB_HOST" != *"-sq" ]]; then DB_HOST="${DB_BASENAME}-sq"; fi  # cannot be underscore
 
 # #############################################################################
 # create sql server
 
-echo -e "\nCreating sql server\n"
+echo -e "\nCreate sql server if not exist\n"
 
+DB_HOST_CREATED=""
 if ! AZ sql server show --name "${DB_HOST}" -g "${RG_NAME}"; then
     if ! AZ sql server create --name "${DB_HOST}" -g "${RG_NAME}" \
         --admin-user "${DBA_USERNAME}" \
         --admin-password "${DBA_PASSWORD}"; then
         cat /tmp/az_stderr.$$; return 1;
     fi
-    read -rd "\n" DB_HOST DB_HOST_FQDN DBA_USERNAME <<< "$(jq -r '.name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+    DB_HOST_CREATED="1"
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql server delete -y -n "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql server delete -y -n "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
     fi
 fi
+
+read -rd "\n" DB_HOST DB_HOST_FQDN DBA_USERNAME <<< "$(read_fqdn_dba_if_host)"
+
 if ! AZ configure --defaults sql-server="${DB_HOST}"; then
     cat /tmp/az_stderr.$$; return 1;
 fi
@@ -59,7 +64,7 @@ echo ""
 # #############################################################################
 # create catalog if not exists - free, if not avail, then paid version
 
-echo -e "\nCreating catalog\n" 
+echo -e "\nCreate catalog if not exist\n" 
 
 if ! AZ sql db show --name ${DB_CATALOG} -g "${RG_NAME}"; then
 
@@ -76,7 +81,7 @@ if ! AZ sql db show --name ${DB_CATALOG} -g "${RG_NAME}"; then
         fi
     fi 
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql db delete -y -n "${DB_CATALOG}" -s "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql db delete -y -n "${DB_CATALOG}" -s "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
     fi
 fi
 
@@ -108,7 +113,8 @@ echo ""
 # #############################################################################
 # Check password
 
-echo -e "\nValidate root password\n"
+echo -e "\nValidate or reset root password.  Could take 5min if resetting\n"
+
 if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
     if ! AZ sql server update --name "${DB_HOST}" -g "${RG_NAME}" --admin-password "${DBA_PASSWORD}"; then
         cat /tmp/az_stderr.$$; return 1;
@@ -122,6 +128,7 @@ fi
 echo -e "\nBilling : https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis"
 echo ""
 
+az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
 
 # #############################################################################
 # export functions

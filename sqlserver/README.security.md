@@ -1,3 +1,16 @@
+The database host firewall are open to public connection.
+This allows easier demo where egress IP of the gateway is not known.
+To protect the database, the following are reset each new demo start.
+
+export DB_BASENAME=${DB_HOST:-$(pwgen -1AB 8)}
+export DB_CATALOG=${DB_CATALOG:-$(pwgen -1AB 8)}
+
+export DBA_USERNAME=${DBA_USERNAME:-$(pwgen -1AB 8)}
+export USER_USERNAME=${USER_USERNAME:-$(pwgen -1AB 8)}
+
+export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y -r \.\@\\\>\`\"\'\| 16 )}"
+export USER_PASSWORD=${USER_PASSWORD:-$(pwgen -1y -r \.\@\\\>\`\"\'\| 16 )}
+
 # make a space delimited list of firewalls
 
 The default allows all IPs to connect to the database.

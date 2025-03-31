@@ -4,16 +4,24 @@
 set -u 
 
 # set tags that will resources remove using cloud scheduler
-export REMOVE_AFTER=$(date --date='+0 day' +%Y-%m-%d)
+if ! declare -p REMOVE_AFTER &> /dev/null; then
+export REMOVE_AFTER=$(date --date='+0 day' +%Y-%m-%d)   # blank is do not delete
+fi
 
 # stop after sleep
-export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"31m"}
+if ! declare -p STOP_AFTER_SLEEP &> /dev/null; then
+export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"31m"}      # blank is do not stop
+fi
 
 # delete database after sleep
-export DELETE_DB_AFTER_SLEEP=${DELETE_DB_AFTER_SLEEP:-"31m"}    # 31m
+if ! declare -p DELETE_DB_AFTER_SLEEP &> /dev/null; then
+export DELETE_DB_AFTER_SLEEP=${DELETE_DB_AFTER_SLEEP:-"31m"}    # blank is do not delete
+fi
 
 # delete lakeflow objects after sleep 
-export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"61m"}
+if ! declare -p DELETE_PIPELINES_AFTER_SLEEP &> /dev/null; then
+export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"61m"}  # blank is do not delete
+fi
 
 # permissive firewall by default.  DO NOT USE WITH PRODUCTION SCHEMA or DATA
 export DB_FIREWALL_CIDRS="${DB_FIREWALL_CIDRS:-"0.0.0.0/0"}"
@@ -31,6 +39,7 @@ export DBA_PASSWORD=${DBA_PASSWORD:-""}
 export USER_PASSWORD=${USER_PASSWORD:-""}
 export az_tenantDefaultDomain=${az_tenantDefaultDomain:-""}
 export az_id=${az_id:-""}
+export az_user_name=${az_user_name:-""}
 
 # display AZ commands
 AZ() {
@@ -67,18 +76,18 @@ local rc
 
 export WHOAMI=${WHOAMI:-$(whoami | tr -d .)}
 
+if ! AZ account show; then
+    cat /tmp/dbx_stderr.$$ /tmp/az_stderr.$$
+    return 1
+fi
+az_id="${az_id:-$(jq -r '.id' /tmp/az_stdout.$$)}" 
+az_tenantDefaultDomain="${az_tenantDefaultDomain:-$(jq -r '.tenantDefaultDomain' /tmp/az_stdout.$$)}"
+az_user_name="${az_user_name:-$(jq -r '.user.name' /tmp/az_stdout.$$)}"
+
+
 if [[ -z "$DBX_USERNAME" ]]; then
     if ! DBX current-user me; then
-        if ! AZ account show; then
-            cat /tmp/dbx_stderr.$$ /tmp/az_stderr.$$
-            return 1
-        fi
-        DBX_USERNAME="$(jq -r .user.name /tmp/az_stdout.$$)"
-        if [[ -z "$az_id" ]] || [[ -z "$az_tenantDefaultDomain" ]]; then
-            read -rd "\n" az_id az_tenantDefaultDomain <<< "$(jq -r '.id, .tenantDefaultDomain' /tmp/az_stdout.$$)"
-            export az_id
-            export az_tenantDefaultDomain
-        fi
+        DBX_USERNAME="$az_user_name"
     else
         DBX_USERNAME="$(jq -r .userName /tmp/dbx_stdout.$$)"
     fi 
@@ -89,15 +98,13 @@ export DBX_USERNAME
 export DBA_USERNAME=${DBA_USERNAME:-$(pwgen -1AB 8)}        # GCP hardcoded to defaults to sqlserver.  Make it same for Azure
 export USER_USERNAME=${USER_USERNAME:-$(pwgen -1AB 8)}      # set if not defined
 
-export RG_NAME=${RG_NAME:-${WHOAMI}-lfcs}               # resource group name
+export RG_NAME=${RG_NAME:-${WHOAMI}-lfcs-rg}                # resource group name
+export RG_NAME_PERMANENT="lfcs-demo-rg"                     # resource group name
 
 export USE_DBX_SECRETS=""
 
 # return 3 variables
 read_fqdn_dba_if_host(){
-local DB_HOST
-local DB_HOST_FQDN
-local DBA_USERNAME
     # assume list
     read -rd "\n" DB_HOST <<< "$(jq -r 'first(.[]) | .name' /tmp/az_stdout.$$ 2>/dev/null)" 
     # assume not a list
@@ -109,12 +116,11 @@ local DBA_USERNAME
             read -rd "\n" DB_HOST_FQDN DBA_USERNAME <<< "$(jq -r '.fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
         fi
     fi
-    echo -e "$DB_HOST\n$DB_HOST_FQDN\n$DBA_USERNAME\n"
 }
 
 # return 1 variable
 set_mi_fqdn_dba_host() {
-    echo -e "${DB_HOST_FQDN/${DB_HOST}./${DB_HOST}.public.}"
+    DB_HOST_FQDN="${DB_HOST_FQDN/${DB_HOST}./${DB_HOST}.public.}"
 }
 
 # DB and catalog basename
@@ -174,14 +180,17 @@ fi
 # https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/manage-resource-groups-cli
 
 # multiples tags are defined correctly below.  NOT A MISTAKE
-if ! AZ group show --resource-group "${RG_NAME}" ; then
-    if ! AZ group create --resource-group "${RG_NAME}" --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" ; then
-        cat /tmp/az_stderr.$$; return 1
+if ! AZ group show --resource-group "${RG_NAME_PERMANENT}" ; then
+    if ! AZ group show --resource-group "${RG_NAME}" ; then
+        if ! AZ group create --resource-group "${RG_NAME}" --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" ; then
+            cat /tmp/az_stderr.$$; return 1
+        fi
     fi
 fi
+RG_NAME=$(jq -r .name /tmp/az_stdout.$$)
 if ! AZ configure --defaults group="${RG_NAME}"; then 
     cat /tmp/az_stderr.$$; return 1
 fi
 
-echo "az group ${WHOAMI}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${WHOAMI}/overview"
+echo "az group ${WHOAMI}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/overview"
 echo ""

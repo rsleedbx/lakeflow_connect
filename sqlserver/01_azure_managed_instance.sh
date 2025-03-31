@@ -15,11 +15,8 @@ export AZ_DB_TYPE=zmi
 # check if sql server if exists
 if [[ -z "$DB_HOST" || "$DB_HOST" != *"$-mi" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zmi" ]]; then
     if AZ sql mi list --resource-group "${RG_NAME}"; then
-        read -rd "\n" DB_HOST DB_HOST_FQDN DBA_USERNAME <<< "$(read_fqdn_dba_if_host)"
-        export DB_HOST 
-        export DB_HOST_FQDN 
-        export DBA_USERNAME         
-        read -rd "\n" DB_HOST_FQDN                      <<< "$(set_mi_fqdn_dba_host)"
+        read_fqdn_dba_if_host     
+        set_mi_fqdn_dba_host
         export DB_PORT=3342
     fi
     if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && AZ sql midb list --mi "$DB_HOST" --resource-group "${RG_NAME}"; then
@@ -146,8 +143,8 @@ else
     echo "AZ sql mi ${DB_HOST}: exists"
 fi
 
-read -rd "\n" DB_HOST DB_HOST_FQDN DBA_USERNAME <<< "$(read_fqdn_dba_if_host)"
-read -rd "\n" DB_HOST_FQDN                      <<< "$(set_mi_fqdn_dba_host)"
+read_fqdn_dba_if_host
+set_mi_fqdn_dba_host
 if [[ "$(jq -r '.state' /tmp/az_stdout.$$)" != "Ready" ]]; then
     if ! start_db; then
         cat /tmp/az_stderr.$$

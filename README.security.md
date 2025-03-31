@@ -38,3 +38,30 @@ pkill -f "sleep 131m"
 - hostname (database name)
 - catalog name
 - user name
+
+- [Optional] Remove the firewall rules
+
+The below examples are open access. **DO NOT USE THEM**. Restrict to some trusted addresses.
+
+-  Azure SQL Server:
+
+    ```bash
+    az sql server firewall-rule create --start-ip-address 0.0.0.0 --end-ip-address 255.255.255.255
+    ```
+
+- Azure SQL Managed Instance:
+
+  ```bash
+  az network nsg rule create --name "allow_dbx_inbound" --nsg-name $nsg \
+  --source-address-prefixes 0.0.0.0/0 \
+  --priority 150 --access Allow  --source-port-ranges "*" \
+  --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges 1433 3342 --direction Inbound --protocol Tcp 
+  ```
+
+# Find the passwords saved env and Databricks secrets
+```
+echo "$DBA_USERNAME:$DBA_PASSWORD" 
+echo "$USER_USERNAME"$USER_PASSWORD"
+echo "$DBA_USERNAME@$DB_HOST_FQDN:$DB_PORT/master"
+echo "$USER_USERNAME@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG"
+```

@@ -15,10 +15,7 @@ export AZ_DB_TYPE=zsql
 # check if sql server if exists
 if [[ -z "$DB_HOST" || "$DB_HOST" != *"-sq" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zsql" ]]; then
     if AZ sql server list --resource-group "${RG_NAME}"; then
-        read -rd "\n" DB_HOST DB_HOST_FQDN DBA_USERNAME <<< "$(read_fqdn_dba_if_host)"
-        export DB_HOST 
-        export DB_HOST_FQDN 
-        export DBA_USERNAME 
+        read_fqdn_dba_if_host
         export DB_PORT=1433
     fi
     if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && AZ sql db list -s "$DB_HOST" --resource-group "${RG_NAME}"; then
@@ -52,8 +49,7 @@ if ! AZ sql server show --name "${DB_HOST}" -g "${RG_NAME}"; then
     fi
 fi
 
-read -rd "\n" DB_HOST DB_HOST_FQDN DBA_USERNAME <<< "$(read_fqdn_dba_if_host)"
-
+read_fqdn_dba_if_host
 if ! AZ configure --defaults sql-server="${DB_HOST}"; then
     cat /tmp/az_stderr.$$; return 1;
 fi

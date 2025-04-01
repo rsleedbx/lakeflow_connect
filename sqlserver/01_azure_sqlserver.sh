@@ -88,20 +88,23 @@ echo ""
 
 # Run firewall rules before coming here
 
-echo -e "Creating permissive firewall rules\n"
+echo -e "Creating permissive firewall rules if not exist\n"
 
 # convert CIDR to range 
-declare -A fw_rules
-for fw_rule in "${DB_FIREWALL_CIDRS[@]}"; do # "${array[@]}" = single word at a time
-    read -rd "\n" host_min host_max <<< \
-        "$(ipcalc -bn "${fw_rule}" | awk -F'[:[:space:]]+' '/^HostMin|^HostMax/ {print $(NF-1)}')"
-    fw_rule_name="$(echo "${fw_rule}" | tr [./] _)"
-    if ! AZ sql server firewall-rule show -n "${fw_rule_name}"; then
-        if ! AZ sql server firewall-rule create -n "${fw_rule_name}" -s "$DB_HOST" -g "${RG_NAME}" --start-ip-address ${host_min} --end-ip-address "${host_max}"; then
-            cat /tmp/az_stderr.$$; return 1;
+
+if ! AZ sql server firewall-rule list; then cat /tmp/az_stderr.$$; return 1; fi
+if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
+    for fw_rule in "${DB_FIREWALL_CIDRS[@]}"; do # "${array[@]}" = single word at a time
+        read -rd "\n" host_min host_max <<< \
+            "$(ipcalc -bn "${fw_rule}" | awk -F'[:[:space:]]+' '/^HostMin|^HostMax/ {print $(NF-1)}')"
+        fw_rule_name="$(echo "${fw_rule}" | tr [./] _)"
+        if ! AZ sql server firewall-rule show -n "${fw_rule_name}"; then
+            if ! AZ sql server firewall-rule create -n "${fw_rule_name}" -s "$DB_HOST" -g "${RG_NAME}" --start-ip-address ${host_min} --end-ip-address "${host_max}"; then
+                cat /tmp/az_stderr.$$; return 1;
+            fi
         fi
-    fi
-done 
+    done 
+fi
 
 echo "AZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/servers/${DB_HOST}/networking"
 echo ""
@@ -112,6 +115,10 @@ echo ""
 echo -e "\nValidate or reset root password.  Could take 5min if resetting\n"
 
 if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
+    if [[ -n "$DB_HOST_CREATED" ]]; then
+        echo "can't connect to newly created host"
+        return 1;
+    fi
     if ! AZ sql server update --name "${DB_HOST}" -g "${RG_NAME}" --admin-password "${DBA_PASSWORD}"; then
         cat /tmp/az_stderr.$$; return 1;
     fi
@@ -120,8 +127,15 @@ if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT
     fi
 fi
 
+# make sure user catalog is online
+if ! AZ sql db show --name "$DB_CATALOG" --server "$DB_HOST"; then cat /tmp/az_stderr.$$; return 1; fi
+if [[ "Online" == "$(jq -r '.state' /tmp/az_stdout.$$)" ]]; then CONNECT_TIMEOUT=10; else CONNECT_TIMEOUT=120; fi
+if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG" "$CONNECT_TIMEOUT"; then
+    cat /tmp/az_stderr.$$; return 1;
+fi
+
 # #############################################################################
-echo -e "\nBilling : https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis"
+echo "Billing ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
 echo ""
 
 az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table

@@ -94,12 +94,12 @@ if [[ -z "$DBX_USERNAME" ]]; then
 fi
 export DBX_USERNAME
 
+
 # used when creating.  preexisting db admin will be used
 export DBA_USERNAME=${DBA_USERNAME:-$(pwgen -1AB 8)}        # GCP hardcoded to defaults to sqlserver.  Make it same for Azure
 export USER_USERNAME=${USER_USERNAME:-$(pwgen -1AB 8)}      # set if not defined
 
 export RG_NAME=${RG_NAME:-${WHOAMI}-lfcs-rg}                # resource group name
-export RG_NAME_PERMANENT="lfcs-demo-rg"                     # resource group name
 
 export USE_DBX_SECRETS=""
 
@@ -135,14 +135,26 @@ export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \:\.\@\\\>\`\"\'\| 16 )}" 
 
 # functions used 
 
+test_dba_master_connect() {
+    test_db_connect "$DBA_USERNAME" "$DBA_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "master" "${1:-""}"
+}
+test_dba_catalog_connect() {
+    test_db_connect "$DBA_USERNAME" "$DBA_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG" "${1-""}"
+}
+
+test_user_catalog_connect() {
+    test_db_connect "$USER_USERNAME" "$USER_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG" "${1-""}"
+}
+
 test_db_connect() {
     local dba_username=$1
     local dba_password=$2
     local db_host_fqdn=$3
     local db_port=$4
     local db_catalog=$5
+    local timeout=${6:-5}
 
-    echo "select 1" | sqlcmd -d "$db_catalog" -S ${db_host_fqdn},${db_port} -U "${dba_username}" -P "${dba_password}" -C -l 60 >/tmp/select1_stdout.$$ 2>/tmp/select1_stderr.$$
+    echo "select 1" | sqlcmd -l "${timeout}" -d "$db_catalog" -S ${db_host_fqdn},${db_port} -U "${dba_username}" -P "${dba_password}" -C >/tmp/select1_stdout.$$ 2>/tmp/select1_stderr.$$
     if [[ $? == 0 ]]; then 
         echo "connect ok $dba_username@$db_host_fqdn:${db_port}/${db_catalog}"
     else 
@@ -180,11 +192,9 @@ fi
 # https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/manage-resource-groups-cli
 
 # multiples tags are defined correctly below.  NOT A MISTAKE
-if ! AZ group show --resource-group "${RG_NAME_PERMANENT}" ; then
-    if ! AZ group show --resource-group "${RG_NAME}" ; then
-        if ! AZ group create --resource-group "${RG_NAME}" --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" ; then
-            cat /tmp/az_stderr.$$; return 1
-        fi
+if ! AZ group show --resource-group "${RG_NAME}" ; then
+    if ! AZ group create --resource-group "${RG_NAME}" --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" ; then
+        cat /tmp/az_stderr.$$; return 1
     fi
 fi
 RG_NAME=$(jq -r .name /tmp/az_stdout.$$)
@@ -192,5 +202,22 @@ if ! AZ configure --defaults group="${RG_NAME}"; then
     cat /tmp/az_stderr.$$; return 1
 fi
 
-echo "az group ${WHOAMI}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/overview"
+echo "Billing ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
 echo ""
+
+# display secrets
+for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
+    v=$(databricks secrets get-secret "${RG_NAME}" "${k}" 2>/dev/null | jq -r '.value | @base64d')
+    echo $k=$v
+done
+
+# retrieve values for secrets 
+for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
+v=$(databricks secrets get-secret "${RG_NAME}" "${k}" 2>/dev/null | jq -r '.value | @base64d')
+if [[ -n "$v" ]]; then 
+    eval "$k='$v'"
+else
+    echo "secrets "${RG_NAME}" ${k} not found.  Create a new database."
+    break
+fi
+done

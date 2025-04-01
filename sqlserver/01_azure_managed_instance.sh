@@ -180,15 +180,18 @@ echo -e "AZ sql midb ${DB_CATALOG}: https://portal.azure.com/#@${az_tenantDefaul
 
 # Run firewall rules before coming here
 
-echo -e "Creating permissive firewall rules \n"
+echo -e "Creating permissive firewall rules if not exist \n"
 
-if ! AZ network nsg rule show --name "0_0_0_0_0" --nsg-name $nsg ; then
-    if ! AZ network nsg rule create --name "0_0_0_0_0" --nsg-name $nsg \
-        --source-address-prefixes "${DB_FIREWALL_CIDRS[*]}" \
-        --priority 151 --access Allow  --source-port-ranges "*" \
-        --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges 1433 3342 --direction Inbound --protocol Tcp ; then    
-        cat /tmp/az_stderr.$$
-        return 1
+if ! AZ sql server firewall-rule list; then cat /tmp/az_stderr.$$; return 1; fi
+if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
+    if ! AZ network nsg rule show --name "0_0_0_0_0" --nsg-name "$nsg" ; then
+        if ! AZ network nsg rule create --name "0_0_0_0_0" --nsg-name "$nsg" \
+            --source-address-prefixes "${DB_FIREWALL_CIDRS[*]}" \
+            --priority 151 --access Allow  --source-port-ranges "*" \
+            --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges 1433 3342 --direction Inbound --protocol Tcp ; then    
+            cat /tmp/az_stderr.$$
+            return 1
+        fi
     fi
 fi
 
@@ -200,7 +203,8 @@ echo -e "AZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az
 echo -e "\nValidate or reset root password.  Could take 5min if resetting\n"
 
 if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
-    if [[ "$DB_HOST_CREATED" ]]; then
+    if [[ -n "$DB_HOST_CREATED" ]]; then
+        echo "can't connect to newly created host"
         return 1;
     fi
     if ! AZ sql mi update --name ${DB_HOST} --admin-password "${DBA_PASSWORD}" ; then
@@ -213,4 +217,6 @@ if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT
 fi
 
 # #############################################################################
-echo -e "Billing : https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis \n"
+echo "Billing ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
+
+az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table

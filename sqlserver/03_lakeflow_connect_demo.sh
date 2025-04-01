@@ -22,7 +22,7 @@ if ! DBX auth env; then cat /tmp/dbx_stderr.$$; return 1; fi
 DATABRICKS_HOST=$(jq -r .env.DATABRICKS_HOST /tmp/dbx_stdout.$$)
 export DATABRICKS_HOST
 # used for connection
-CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST_FQDN}_${USER_USERNAME}" | tr [.@] _)
+CONNECTION_NAME=$(echo "${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr [.@] _)
 export CONNECTION_NAME
 export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_GW
 export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_IG
@@ -78,8 +78,8 @@ if ! DBX connections get "$CONNECTION_NAME"; then
         cat /tmp/dbx_stderr.$$
         return 1
     fi
-    if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
+    if [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
+        sleep "${DELETE_DB_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
     fi
 else
   # in case password is updated

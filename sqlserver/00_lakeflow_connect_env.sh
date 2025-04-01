@@ -15,18 +15,22 @@ fi
 
 # delete database after sleep
 if ! declare -p DELETE_DB_AFTER_SLEEP &> /dev/null; then
-export DELETE_DB_AFTER_SLEEP=${DELETE_DB_AFTER_SLEEP:-"31m"}    # blank is do not delete
+export DELETE_DB_AFTER_SLEEP=${DELETE_DB_AFTER_SLEEP:-"61m"}    # blank is do not delete
 fi
 
 # delete lakeflow objects after sleep 
 if ! declare -p DELETE_PIPELINES_AFTER_SLEEP &> /dev/null; then
-export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"61m"}  # blank is do not delete
+export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"63m"}  # blank is do not delete
 fi
 
 # save credentials in secrets so that password reset won't be required
-if ! declare -p USE_DBX_SECRETS &> /dev/null; then
-export USE_DBX_SECRETS=1
+if ! declare -p GET_DBX_SECRETS &> /dev/null; then
+export GET_DBX_SECRETS=1
 fi
+if ! declare -p PUT_DBX_SECRETS &> /dev/null; then
+export PUT_DBX_SECRETS=1
+fi
+export SECRETS_SCOPE="${SECRETS_SCOPE:-""}"  # secret scope being used
 
 # permissive firewall by default.  DO NOT USE WITH PRODUCTION SCHEMA or DATA
 export DB_FIREWALL_CIDRS="${DB_FIREWALL_CIDRS:-"0.0.0.0/0"}"
@@ -120,6 +124,8 @@ read_fqdn_dba_if_host(){
     fi
 }
 
+
+
 # return 1 variable
 set_mi_fqdn_dba_host() {
     DB_HOST_FQDN="${DB_HOST_FQDN/${DB_HOST}./${DB_HOST}.public.}"
@@ -165,20 +171,67 @@ test_db_connect() {
     fi
 }
 
-# NOT USED
-dba_username_update_if_different() {
-    # update DBA_USERNAME if different
-    administratorLogin=$1
-    if [[ "$DBA_USERNAME" != "$administratorLogin" ]]; then
-        if DBX secrets create-scope "${SECRETS_SCOPE}"; then
-            if ! DBX secrets put-secret "${SECRETS_SCOPE}" DBA_USERNAME --string-value "${DBA_USERNAME}"; then
-                echo "failed."
-                return 1
-            fi
-            DBA_USERNAME=$administratorLogin
-            export DBA_USERNAME
+# #############################################################################
+# retrieve setting from secrets if exists
+
+get_secrets() {
+    local SECRETS_SCOPE_SEARCH=()
+    if [[ -n "${GET_DBX_SECRETS}" || -n "${PUT_DBX_SECRETS}" ]]; then
+        if [[ -z "${SECRETS_SCOPE}" ]]; then
+            SECRETS_SCOPE_SEARCH=("${RG_NAME}_${AZ_DB_TYPE}" "${RG_NAME}")
+        else
+            SECRETS_SCOPE_SEARCH=("${SECRETS_SCOPE}")
         fi
     fi
+    SECRETS_SCOPE="${RG_NAME}_${AZ_DB_TYPE}"
+    export SECRETS_SCOPE
+
+    if [[ -z "${GET_DBX_SECRETS}" ]]; then
+        return 0
+    fi
+    
+    for s in "${SECRETS_SCOPE_SEARCH[@]}"; do 
+        if get_secrets_from_scope "${s}"; then
+            SECRETS_SCOPE=${s}
+            export SECRETS_SCOPE
+            break
+        fi
+    done
+}
+
+get_secrets_from_scope() {
+
+    local _SECRETS_SCOPE="${1:-${SECRETS_SCOPE}}"
+    if ! DBX secrets list-secrets "${_SECRETS_SCOPE}"; then
+        return 1
+    fi
+    for k in key_value; do
+        if DBX secrets get-secret "${_SECRETS_SCOPE}" "${k}" >/dev/null 2>&1; then
+            v="$(jq -r '.value | @base64d' /tmp/dbx_stdout.$$)"
+            eval "$v"
+            #echo "$v retrieved from databricks secrets"
+        fi
+    done
+}
+
+put_secrets() {
+if [[ -n "${PUT_DBX_SECRETS}" && -n "${SECRETS_SCOPE}" ]] && [[ -z "${GET_DBX_SECRETS}" || -n "${DB_HOST_CREATED}" || -n "${DB_PASSWORD_CHANGED}" ]]; then
+
+    local _SECRETS_SCOPE="${1:-${SECRETS_SCOPE}}"
+    if ! DBX secrets list-secrets "${_SECRETS_SCOPE}"; then
+        if ! DBX secrets create-scope "${_SECRETS_SCOPE}"; then
+            cat /tmp/dbx_stderr.$$; return 1;
+        fi
+    fi
+    echo "Creating secrets"
+    key_value=""
+    for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
+        key_value="export ${k}='${!k}';$key_value"
+    done
+    if ! DBX secrets put-secret "${_SECRETS_SCOPE}" "key_value" --string-value "$key_value"; then
+        cat /tmp/dbx_stderr.$$; return 1;
+    fi
+fi
 }
 
 # #############################################################################
@@ -189,19 +242,6 @@ if [[ -n "${CLOUD_LOCATION}" ]]; then
     fi
 fi
 
-# #############################################################################
-# retrieve setting from secrets if exists
-
-if [[ -n "$USE_DBX_SECRETS" ]] && DBX secrets list-secrets "${RG_NAME}"; then
-    echo "Loading from secrets"
-    for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
-        if DBX secrets get-secret "${RG_NAME}" "${k}" >/dev/null 2>&1; then
-            v="$(jq -r '.value | @base64d' /tmp/dbx_stdout.$$)"
-            eval "$k='$v'"
-            echo "$k retrieved from databricks secrets"
-        fi
-    done
-fi
 
 # #############################################################################
 # create resource group if not exists

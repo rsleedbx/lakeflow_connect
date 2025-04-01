@@ -79,7 +79,7 @@ if ! DBX connections get "$CONNECTION_NAME"; then
         return 1
     fi
     if [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
-        sleep "${DELETE_DB_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
+        sleep "${DELETE_DB_AFTER_SLEEP}" && databricks connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
     fi
 else
   # in case password is updated

@@ -136,7 +136,7 @@ if ! AZ sql mi show --name "${DB_HOST}"; then
     fi
     DB_HOST_CREATED=1
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql mi delete -y -n "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        sleep "${DELETE_DB_AFTER_SLEEP}" && az sql mi delete -y -n "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
     fi
 else
     echo "AZ sql mi ${DB_HOST}: exists"
@@ -167,7 +167,7 @@ if ! AZ sql midb show -n "${DB_CATALOG}" --mi "${DB_HOST}" -g "${RG_NAME}"; then
         return 1
     fi
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql midb delete -y -n "${DB_CATALOG}" --mi "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        sleep "${DELETE_DB_AFTER_SLEEP}" && az sql midb delete -y -n "${DB_CATALOG}" --mi "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
     fi    
 else
     echo "AZ sql midb ${DB_CATALOG}: exists"

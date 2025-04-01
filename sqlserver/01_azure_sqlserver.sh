@@ -12,31 +12,93 @@ fi
 export AZ_DB_TYPE=zsql
 
 # #############################################################################
-# check if sql server if exists
-if [[ -z "$DB_HOST" || "$DB_HOST" != *"-sq" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zsql" ]]; then
-    if AZ sql server list -g "${RG_NAME}"; then
-        read_fqdn_dba_if_host
-        export DB_PORT=1433
+# export functions
+
+password_reset_db() {
+    if ! AZ sql server update --name "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
+        cat /tmp/az_stderr.$$; return 1;
     fi
-    if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && AZ sql db list -s "$DB_HOST" -g "${RG_NAME}"; then
-        DB_CATALOG="$(jq -r 'first(.[] | select(.name != "master") | .name)' /tmp/az_stdout.$$)"
-        export DB_CATALOG
-    else
-        DB_CATALOG="$CATALOG_BASENAME"
+}
+export -f password_reset_db
+
+start_db() {
+    local skip_db_show="${1:-""}"
+
+    if [[ -z "$skip_db_show" ]] && ! AZ sql db show --name "$DB_CATALOG" -s "$DB_HOST" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
+    if [[ "Online" == "$(jq -r '.state' /tmp/az_stdout.$$)" ]]; then CONNECT_TIMEOUT=10; else CONNECT_TIMEOUT=120; fi
+    if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG" "$CONNECT_TIMEOUT"; then
+        cat /tmp/az_stderr.$$; return 1;
     fi
-    if [[ -n "$DB_HOST" ]]; then
-        echo "az sql server: $DB_HOST $DBA_USERNAME@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG"
+}
+export -f start_db
+
+stop_db() {
+    echo "stop db not required"
+}
+export -f stop_db
+
+delete_db() {
+    if ! AZ sql server delete -y --name "${DB_HOST}" -g "${RG_NAME}"; then 
+        cat /tmp/az_stderr.$$; return 1;
     fi
+}
+export -f delete_db
+
+delete_catalog() {
+    if ! AZ sql db delete -y --name "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then 
+        cat /tmp/az_stderr.$$; return 1;
+    fi
+}
+export -f delete_catalog
+
+show_firewall() {
+    if ! AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"; then 
+        cat /tmp/az_stderr.$$; return 1;
+    fi
+}
+export -f show_firewall
+
+# #############################################################################
+# load secrets if exists
+
+echo -e "\nLoading previous secrets \n"
+
+get_secrets
+
+# #############################################################################
+# set default host and catalog if not specified
+
+echo -e "\nLoading available host and catalog if not specified \n"
+
+# get avail sql server if not specified
+if  [[ -z "$DB_HOST" || "$DB_HOST" != *"-sq" || "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
+    [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zsql" ]] && \
+    AZ sql server list -g "${RG_NAME}"; then
+    
+    read -rd "\n" DB_HOST DB_HOST_FQDN DBA_USERNAME <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/servers")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
 fi
 
-if [[ -z "$DB_HOST" ]] || [[ "$DB_HOST" != *"-sq" ]]; then DB_HOST="${DB_BASENAME}-sq"; fi  # cannot be underscore
+# get avail catalog if not specified
+if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && \
+    AZ sql db list -s "$DB_HOST" -g "${RG_NAME}"; then
+
+    DB_CATALOG="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG) | .name)' /tmp/az_stdout.$$)"
+fi
+
+if [[ -z "$DB_HOST" ]] || [[ "$DB_HOST" != *"-sq" ]]; then DB_HOST="${DB_BASENAME}-sq"; fi  
+
+if [[ -n "$DB_HOST_FQDN" && -n "$DB_HOST" ]]; then
+    echo "az sql server/catalog: $DB_HOST $DBA_USERNAME@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG"
+fi
+
+export DB_PORT=1433
 
 # #############################################################################
 # create sql server
 
 echo -e "\nCreate sql server if not exists\n"
 
-DB_HOST_CREATED=""
+export DB_HOST_CREATED=""
 if ! AZ sql server show --name "${DB_HOST}" -g "${RG_NAME}"; then
     if ! AZ sql server create --name "${DB_HOST}" -g "${RG_NAME}" \
         --admin-user "${DBA_USERNAME}" \
@@ -45,7 +107,7 @@ if ! AZ sql server show --name "${DB_HOST}" -g "${RG_NAME}"; then
     fi
     DB_HOST_CREATED="1"
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql server delete -y -n "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        sleep "${DELETE_DB_AFTER_SLEEP}" && az sql server delete -y --name "${DB_HOST}" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
     fi
 fi
 
@@ -77,9 +139,12 @@ if ! AZ sql db show --name "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
         fi
     fi 
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql db delete -y -n "${DB_CATALOG}" -s "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        sleep "${DELETE_DB_AFTER_SLEEP}" && az sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
     fi
 fi
+
+# make sure user catalog is online
+start_db "skip_db_show"  
 
 echo "AZ sql db ${DB_CATALOG}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/servers/${DB_HOST}/databases/${DB_CATALOG}/overview"
 echo ""
@@ -114,57 +179,28 @@ echo ""
 
 echo -e "\nValidate or reset root password.  Could take 5min if resetting\n"
 
+export DB_PASSWORD_CHANGED=""
 if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
     if [[ -n "$DB_HOST_CREATED" ]]; then
         echo "can't connect to newly created host"
         return 1;
     fi
-    if ! AZ sql server update --name "${DB_HOST}" -g "${RG_NAME}" --admin-password "${DBA_PASSWORD}"; then
-        cat /tmp/az_stderr.$$; return 1;
-    fi
+
+    password_reset_db
+
+    DB_PASSWORD_CHANGED="1"
     if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
         cat /tmp/az_stderr.$$; return 1;
     fi
 fi
 
-# make sure user catalog is online
-if ! AZ sql db show --name "$DB_CATALOG" -s "$DB_HOST" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
-if [[ "Online" == "$(jq -r '.state' /tmp/az_stdout.$$)" ]]; then CONNECT_TIMEOUT=10; else CONNECT_TIMEOUT=120; fi
-if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG" "$CONNECT_TIMEOUT"; then
-    cat /tmp/az_stderr.$$; return 1;
-fi
+# #############################################################################
+# save the credentials to secrets store for reuse
+
+put_secrets
 
 # #############################################################################
 echo "Billing ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
 echo ""
 
 az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
-
-# #############################################################################
-# export functions
-
-password_reset_db() {
-    if ! AZ sql server update --name "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
-        cat /tmp/az_stderr.$$; return 1;
-    fi
-}
-export -f password_reset_db
-
-stop_db() {
-    echo "stop db not required"
-}
-export -f stop_db
-
-delete_db() {
-    if ! AZ sql server delete -y --name "${DB_HOST}" -g "${RG_NAME}"; then 
-        cat /tmp/az_stderr.$$; return 1;
-    fi
-}
-export -f delete_db
-
-show_firewall() {
-    if ! AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"; then 
-        cat /tmp/az_stderr.$$; return 1;
-    fi
-}
-export -f show_firewall

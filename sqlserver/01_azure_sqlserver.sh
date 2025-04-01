@@ -14,11 +14,11 @@ export AZ_DB_TYPE=zsql
 # #############################################################################
 # check if sql server if exists
 if [[ -z "$DB_HOST" || "$DB_HOST" != *"-sq" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zsql" ]]; then
-    if AZ sql server list --resource-group "${RG_NAME}"; then
+    if AZ sql server list -g "${RG_NAME}"; then
         read_fqdn_dba_if_host
         export DB_PORT=1433
     fi
-    if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && AZ sql db list -s "$DB_HOST" --resource-group "${RG_NAME}"; then
+    if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && AZ sql db list -s "$DB_HOST" -g "${RG_NAME}"; then
         DB_CATALOG="$(jq -r 'first(.[] | select(.name != "master") | .name)' /tmp/az_stdout.$$)"
         export DB_CATALOG
     else
@@ -62,7 +62,7 @@ echo ""
 
 echo -e "\nCreate catalog if not exist\n" 
 
-if ! AZ sql db show --name ${DB_CATALOG} -g "${RG_NAME}"; then
+if ! AZ sql db show --name "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
 
     if ! AZ sql db create --name "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
         --compute-model Serverless --backup-storage-redundancy Local \
@@ -92,13 +92,13 @@ echo -e "Creating permissive firewall rules if not exist\n"
 
 # convert CIDR to range 
 
-if ! AZ sql server firewall-rule list; then cat /tmp/az_stderr.$$; return 1; fi
+if ! AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
 if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
     for fw_rule in "${DB_FIREWALL_CIDRS[@]}"; do # "${array[@]}" = single word at a time
         read -rd "\n" host_min host_max <<< \
             "$(ipcalc -bn "${fw_rule}" | awk -F'[:[:space:]]+' '/^HostMin|^HostMax/ {print $(NF-1)}')"
         fw_rule_name="$(echo "${fw_rule}" | tr [./] _)"
-        if ! AZ sql server firewall-rule show -n "${fw_rule_name}"; then
+        if ! AZ sql server firewall-rule show -n "${fw_rule_name}" -s "${DB_HOST}" -g "${RG_NAME}"; then
             if ! AZ sql server firewall-rule create -n "${fw_rule_name}" -s "$DB_HOST" -g "${RG_NAME}" --start-ip-address ${host_min} --end-ip-address "${host_max}"; then
                 cat /tmp/az_stderr.$$; return 1;
             fi
@@ -128,7 +128,7 @@ if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT
 fi
 
 # make sure user catalog is online
-if ! AZ sql db show --name "$DB_CATALOG" --server "$DB_HOST"; then cat /tmp/az_stderr.$$; return 1; fi
+if ! AZ sql db show --name "$DB_CATALOG" -s "$DB_HOST" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
 if [[ "Online" == "$(jq -r '.state' /tmp/az_stdout.$$)" ]]; then CONNECT_TIMEOUT=10; else CONNECT_TIMEOUT=120; fi
 if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG" "$CONNECT_TIMEOUT"; then
     cat /tmp/az_stderr.$$; return 1;
@@ -144,7 +144,7 @@ az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kin
 # export functions
 
 password_reset_db() {
-    if ! AZ sql server update --name "${DB_HOST}" --admin-password "${DBA_PASSWORD}"; then
+    if ! AZ sql server update --name "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
         cat /tmp/az_stderr.$$; return 1;
     fi
 }
@@ -156,13 +156,15 @@ stop_db() {
 export -f stop_db
 
 delete_db() {
-    echo "AZ sql ${DB_HOST}: delete started"
-    AZ sql server delete -y --name "${DB_HOST}"
-    echo "AZ sql ${DB_HOST}: delete completed"
+    if ! AZ sql server delete -y --name "${DB_HOST}" -g "${RG_NAME}"; then 
+        cat /tmp/az_stderr.$$; return 1;
+    fi
 }
 export -f delete_db
 
 show_firewall() {
-    AZ sql server firewall-rule list
+    if ! AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"; then 
+        cat /tmp/az_stderr.$$; return 1;
+    fi
 }
 export -f show_firewall

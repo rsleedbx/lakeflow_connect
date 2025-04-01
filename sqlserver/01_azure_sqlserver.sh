@@ -15,7 +15,7 @@ export AZ_DB_TYPE=zsql
 # export functions
 
 password_reset_db() {
-    if ! AZ sql server update --name "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
+    if ! AZ sql server update -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
         cat /tmp/az_stderr.$$; return 1;
     fi
 }
@@ -24,7 +24,7 @@ export -f password_reset_db
 start_db() {
     local skip_db_show="${1:-""}"
 
-    if [[ -z "$skip_db_show" ]] && ! AZ sql db show --name "$DB_CATALOG" -s "$DB_HOST" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
+    if [[ -z "$skip_db_show" ]] && ! AZ sql db show -n "$DB_CATALOG" -s "$DB_HOST" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
     if [[ "Online" == "$(jq -r '.state' /tmp/az_stdout.$$)" ]]; then CONNECT_TIMEOUT=10; else CONNECT_TIMEOUT=120; fi
     if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG" "$CONNECT_TIMEOUT"; then
         cat /tmp/az_stderr.$$; return 1;
@@ -38,14 +38,14 @@ stop_db() {
 export -f stop_db
 
 delete_db() {
-    if ! AZ sql server delete -y --name "${DB_HOST}" -g "${RG_NAME}"; then 
+    if ! AZ sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}"; then 
         cat /tmp/az_stderr.$$; return 1;
     fi
 }
 export -f delete_db
 
 delete_catalog() {
-    if ! AZ sql db delete -y --name "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then 
+    if ! AZ sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then 
         cat /tmp/az_stderr.$$; return 1;
     fi
 }
@@ -99,15 +99,15 @@ export DB_PORT=1433
 echo -e "\nCreate sql server if not exists\n"
 
 export DB_HOST_CREATED=""
-if ! AZ sql server show --name "${DB_HOST}" -g "${RG_NAME}"; then
-    if ! AZ sql server create --name "${DB_HOST}" -g "${RG_NAME}" \
+if ! AZ sql server show -n "${DB_HOST}" -g "${RG_NAME}"; then
+    if ! AZ sql server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --admin-user "${DBA_USERNAME}" \
         --admin-password "${DBA_PASSWORD}"; then
         cat /tmp/az_stderr.$$; return 1;
     fi
     DB_HOST_CREATED="1"
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        sleep "${DELETE_DB_AFTER_SLEEP}" && az sql server delete -y --name "${DB_HOST}" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && az sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
     fi
 fi
 
@@ -124,14 +124,14 @@ echo ""
 
 echo -e "\nCreate catalog if not exists\n" 
 
-if ! AZ sql db show --name "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
+if ! AZ sql db show -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
 
-    if ! AZ sql db create --name "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
+    if ! AZ sql db create -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
         --compute-model Serverless --backup-storage-redundancy Local \
         --zone-redundant false --exhaustion-behavior AutoPause --use-free-limit \
          ; then 
 
-        if ! AZ sql db create --name "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
+        if ! AZ sql db create -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
             --compute-model Serverless --backup-storage-redundancy Local \
             --zone-redundant false --exhaustion-behavior AutoPause --auto-pause-delay 15 \
              ; then
@@ -139,7 +139,7 @@ if ! AZ sql db show --name "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
         fi
     fi 
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        sleep "${DELETE_DB_AFTER_SLEEP}" && az sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && az sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
     fi
 fi
 

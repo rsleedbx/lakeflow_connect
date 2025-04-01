@@ -44,7 +44,7 @@ if ! DBX schemas get "$TARGET_CATALOG.$TARGET_SCHEMA"; then
         return 1
     fi
     if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$TARGET_CATALOG.$TARGET_SCHEMA" >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$TARGET_CATALOG.$TARGET_SCHEMA" >> ~/nohup.out 2>&1 &
     fi
 fi
 
@@ -54,7 +54,7 @@ if [[ "$TARGET_CATALOG.$TARGET_SCHEMA" != "$STAGING_CATALOG.$STAGING_SCHEMA" ]] 
         return 1
     fi
     if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$STAGING_CATALOG.$STAGING_SCHEMA" >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$STAGING_CATALOG.$STAGING_SCHEMA" >> ~/nohup.out 2>&1 &
     fi
 fi
 
@@ -79,7 +79,7 @@ if ! DBX connections get "$CONNECTION_NAME"; then
         return 1
     fi
     if [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
-        sleep "${DELETE_DB_AFTER_SLEEP}" && databricks connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
     fi
 else
   # in case password is updated
@@ -119,10 +119,10 @@ GATEWAY_PIPELINE_ID="$(jq -r '.pipeline_id' /tmp/dbx_stdout.$$)"
 export GATEWAY_PIPELINE_ID
 
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$GATEWAY_PIPELINE_ID" >> ~/nohup.out 2>&1 &
+    nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$GATEWAY_PIPELINE_ID" >> ~/nohup.out 2>&1 &
 fi
 if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$GATEWAY_PIPELINE_ID"  >> ~/nohup.out 2>&1 &
+    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$GATEWAY_PIPELINE_ID"  >> ~/nohup.out 2>&1 &
 fi
 
 # #############################################################################
@@ -209,10 +209,10 @@ export INGESTION_PIPELINE_CONTINUOUS
 
 
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
+    nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
 fi
 if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
+    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
 fi
 
 # start if not cont
@@ -243,10 +243,10 @@ export INGESTION_JOB_ID
 
 # print UI URL
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    sleep "${STOP_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
+    nohup sleep "${STOP_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
 fi
 if [[ -z "${STOP_AFTER_SLEEP}" ]] && [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
+    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
 fi
 
 
@@ -282,10 +282,10 @@ EOF
 
 LOAD_GENERATOR_PID=$!
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    sleep "${STOP_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
+    nohup sleep "${STOP_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
 fi
 if [[ -z "${STOP_AFTER_SLEEP}" ]] && [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
+    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
 fi
 echo "Load Generator: started with PID=$LOAD_GENERATOR_PID."
 echo ""

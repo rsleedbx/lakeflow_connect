@@ -34,7 +34,7 @@ if [[ -z "$DB_HOST" ]] || [[ "$DB_HOST" != *"-sq" ]]; then DB_HOST="${DB_BASENAM
 # #############################################################################
 # create sql server
 
-echo -e "\nCreate sql server if not exist\n"
+echo -e "\nCreate sql server if not exists\n"
 
 DB_HOST_CREATED=""
 if ! AZ sql server show --name "${DB_HOST}" -g "${RG_NAME}"; then
@@ -58,9 +58,9 @@ echo "AZ sql ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/re
 echo ""
 
 # #############################################################################
-# create catalog if not exists - free, if not avail, then paid version
+# create catalog if not existss - free, if not avail, then paid version
 
-echo -e "\nCreate catalog if not exist\n" 
+echo -e "\nCreate catalog if not exists\n" 
 
 if ! AZ sql db show --name "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
 
@@ -88,7 +88,7 @@ echo ""
 
 # Run firewall rules before coming here
 
-echo -e "Creating permissive firewall rules if not exist\n"
+echo -e "Creating permissive firewall rules if not exists\n"
 
 # convert CIDR to range 
 

@@ -64,7 +64,7 @@ delete_vnet() {
 
 # #############################################################################
 
-echo -e "\nCreating network \n"
+echo -e "\nCreating network if not exists \n"
 
 if ! AZ network vnet subnet show --name $subnet --vnet-name $vNet; then
     if ! AZ network vnet create --name $vNet -g "${RG_NAME}" --location "$CLOUD_LOCATION" --address-prefixes 10.0.0.0/16; then 
@@ -117,7 +117,7 @@ fi
 
 # Freemium plan https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/free-offer?view=azuresql
 
-echo -e "\nCreating sql managed instance (could take 15 min)\n"
+echo -e "\nCreating sql managed instance if not exists(could take 15 min)\n"
 
 DB_HOST_CREATED=""
 if ! AZ sql mi show --name "${DB_HOST}"; then
@@ -159,7 +159,7 @@ echo "AZ sql mi ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}
 
 # #############################################################################
 
-echo -e "\nCreating catalog\n" 
+echo -e "\nCreating catalog if not exists\n" 
 
 if ! AZ sql midb show -n "${DB_CATALOG}" --mi "${DB_HOST}" -g "${RG_NAME}"; then 
     if ! AZ sql midb create -n "${DB_CATALOG}" --mi "${DB_HOST}" -g "${RG_NAME}" --collation Latin1_General_100_CS_AS_SC; then
@@ -179,10 +179,10 @@ echo -e "AZ sql midb ${DB_CATALOG}: https://portal.azure.com/#@${az_tenantDefaul
 
 # Run firewall rules before coming here
 
-echo -e "Creating permissive firewall rules if not exist \n"
+echo -e "Creating permissive firewall rules if not exists \n"
 
 if ! AZ network nsg rule list --nsg-name "$nsg" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
-if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
+if [[ "0" == "$(jq 'map_values(select(.priority==150)) | length' /tmp/az_stdout.$$)" ]]; then
     if ! AZ network nsg rule show --name "0_0_0_0_0" --nsg-name "$nsg" -g "${RG_NAME}"; then
         if ! AZ network nsg rule create --name "0_0_0_0_0" --nsg-name "$nsg" -g "${RG_NAME}"\
             --source-address-prefixes "${DB_FIREWALL_CIDRS[*]}" \

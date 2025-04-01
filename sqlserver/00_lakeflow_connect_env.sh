@@ -23,6 +23,11 @@ if ! declare -p DELETE_PIPELINES_AFTER_SLEEP &> /dev/null; then
 export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"61m"}  # blank is do not delete
 fi
 
+# save credentials in secrets so that password reset won't be required
+if ! declare -p USE_DBX_SECRETS &> /dev/null; then
+export USE_DBX_SECRETS=1
+fi
+
 # permissive firewall by default.  DO NOT USE WITH PRODUCTION SCHEMA or DATA
 export DB_FIREWALL_CIDRS="${DB_FIREWALL_CIDRS:-"0.0.0.0/0"}"
 
@@ -94,14 +99,11 @@ if [[ -z "$DBX_USERNAME" ]]; then
 fi
 export DBX_USERNAME
 
-
 # used when creating.  preexisting db admin will be used
 export DBA_USERNAME=${DBA_USERNAME:-$(pwgen -1AB 16)}        # GCP hardcoded to defaults to sqlserver.  Make it same for Azure
 export USER_USERNAME=${USER_USERNAME:-$(pwgen -1AB 16)}      # set if not defined
 
 export RG_NAME=${RG_NAME:-${WHOAMI}-lfcs-rg}                # resource group name
-
-export USE_DBX_SECRETS=""
 
 # return 3 variables
 read_fqdn_dba_if_host(){
@@ -188,6 +190,20 @@ if [[ -n "${CLOUD_LOCATION}" ]]; then
 fi
 
 # #############################################################################
+# retrieve setting from secrets if exists
+
+if [[ -n "$USE_DBX_SECRETS" ]] && DBX secrets list-secrets "${RG_NAME}"; then
+    echo "Loading from secrets"
+    for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
+        if DBX secrets get-secret "${RG_NAME}" "${k}" >/dev/null 2>&1; then
+            v="$(jq -r '.value | @base64d' /tmp/dbx_stdout.$$)"
+            eval "$k='$v'"
+            echo "$k retrieved from databricks secrets"
+        fi
+    done
+fi
+
+# #############################################################################
 # create resource group if not exists
 # https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/manage-resource-groups-cli
 
@@ -203,13 +219,4 @@ if ! AZ configure --defaults group="${RG_NAME}"; then
 fi
 
 echo "Billing ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
-echo ""
 
-# retrieve from secrets
-for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
-    if DBX databricks secrets get-secret "${RG_NAME}" "${k}" >/dev/null 2>&1; then
-        v="$(jq -r '.value | @base64d' /tmp/dbx_stdout.$$)"
-        eval "$k='$v'"
-        echo "$k retrieved from databricks secrets"
-    fi
-done

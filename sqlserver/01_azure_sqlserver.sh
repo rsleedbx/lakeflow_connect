@@ -10,6 +10,7 @@ if [ "$0" == "$BASH_SOURCE" ]; then
 fi
 
 export AZ_DB_TYPE=zsql
+export AZ_DB_SUFFIX=sq
 export SECRETS_SCOPE="${SECRETS_SCOPE:-""}"  # secret scope being used
 
 # #############################################################################
@@ -72,7 +73,7 @@ get_secrets
 echo -e "\nLoading available host and catalog if not specified \n"
 
 # make host name follow the naming convention
-if [[ -n "$DB_HOST" && "$DB_HOST" != *"-sq" ]]; then
+if [[ -n "$DB_HOST" && "$DB_HOST" != *"-${AZ_DB_SUFFIX}" ]]; then
     DB_HOST=""
     DB_HOST_FQDN=""
 fi
@@ -101,8 +102,8 @@ if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && \
 fi
 
 # secrets was empty or invalid.
-if [[ -z "${DBA_USERNAME}" || -z "${DB_CATALOG}" || -z "$DB_HOST" || "$DB_HOST" != *"-sq" ]]; then 
-    DB_HOST="${DB_BASENAME}-sq"; 
+if [[ -z "${DBA_USERNAME}" || -z "${DB_CATALOG}" || -z "$DB_HOST" || "$DB_HOST" != *"-${AZ_DB_SUFFIX}" ]]; then 
+    DB_HOST="${DB_BASENAME}-${AZ_DB_SUFFIX}"; 
     DB_CATALOG="$CATALOG_BASENAME"
 fi  
 

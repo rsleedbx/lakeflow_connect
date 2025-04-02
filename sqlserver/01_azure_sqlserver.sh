@@ -64,7 +64,6 @@ export -f show_firewall
 
 echo -e "\nLoading previous secrets \n"
 
-save_before_secrets
 get_secrets
 
 # #############################################################################
@@ -77,19 +76,21 @@ if  [[ -z "$DB_HOST" || "$DB_HOST" != *"-sq" || "$DB_HOST_FQDN" != "$DB_HOST."* 
     [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zsql" ]] && \
     AZ sql server list -g "${RG_NAME}"; then
     
-    read -rd "\n" DB_HOST DB_HOST_FQDN DBA_USERNAME <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/servers")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/servers")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+    if [[ -n $x1 && -n $x2 && -n $x3 ]]; then DB_HOST=x1; DB_HOST_FQDN=x2; DBA_USERNAME=x3; fi
 fi
 
 # get avail catalog if not specified
 if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && \
     AZ sql db list -s "$DB_HOST" -g "${RG_NAME}"; then
 
-    DB_CATALOG="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG) | .name)' /tmp/az_stdout.$$)"
+    x1="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG) | .name)' /tmp/az_stdout.$$)"
+    if [[ -n $x1 ]]; then DB_CATALOG=x1; fi
+
 fi
 
 # secrets was empty or invalid.
 if [[ -z "${DBA_USERNAME}" || -z "${DB_CATALOG}" || -z "$DB_HOST" || "$DB_HOST" != *"-sq" ]]; then 
-    restore_before_secrets
     DB_HOST="${DB_BASENAME}-sq"; 
     DB_CATALOG="$CATALOG_BASENAME"
 fi  
@@ -169,7 +170,9 @@ if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
         read -rd "\n" host_min host_max <<< \
             "$(ipcalc -bn "${fw_rule}" | awk -F'[:[:space:]]+' '/^HostMin|^HostMax/ {print $(NF-1)}')"
         fw_rule_name="$(echo "${fw_rule}" | tr [./] _)"
-        if ! AZ sql server firewall-rule show -n "${fw_rule_name}" -s "${DB_HOST}" -g "${RG_NAME}"; then
+        if [[ -z $host_min || -z $host_max ]]; then
+            echo "${fw_rule} did not produce correct ${host_min} and/or ${host_max}"
+        elif ! AZ sql server firewall-rule show -n "${fw_rule_name}" -s "${DB_HOST}" -g "${RG_NAME}"; then
             if ! AZ sql server firewall-rule create -n "${fw_rule_name}" -s "$DB_HOST" -g "${RG_NAME}" --start-ip-address ${host_min} --end-ip-address "${host_max}"; then
                 cat /tmp/az_stderr.$$; return 1;
             fi

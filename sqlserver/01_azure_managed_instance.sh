@@ -17,7 +17,6 @@ export SECRETS_SCOPE="${SECRETS_SCOPE:-""}"  # secret scope being used
 
 echo -e "\nLoading previous secrets \n"
 
-save_before_secrets
 get_secrets
 
 # #############################################################################
@@ -32,8 +31,8 @@ if [[ -z "$DB_HOST" || "$DB_HOST" != *"$-mi" || "$DB_HOST_FQDN" != "$DB_HOST.*" 
     fi
     if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && AZ sql midb list --mi "$DB_HOST" -g "${RG_NAME}"; then
         echo "DB_CATALOG not set. checking az sql db list"
-        DB_CATALOG="$(jq -r 'first(.[] | select(.name != "master") | .name)' /tmp/az_stdout.$$)"
-        export DB_CATALOG
+        x1="$(jq -r 'first(.[] | select(.name != "master") | .name)' /tmp/az_stdout.$$)"
+        if [[ -n $x1 ]]; then DB_CATALOG=x1; fi
     else
         DB_CATALOG="$CATALOG_BASENAME"
     fi
@@ -56,7 +55,6 @@ export route="${WHOAMI}-route"          #-$randomIdentifier"
 
 # secrets was empty or invalid.
 if [[ -z "${DBA_USERNAME}" || -z "${DB_CATALOG}" || -z "$DB_HOST" || "$DB_HOST" != *"-mi" ]]; then 
-    restore_before_secrets
     DB_HOST="${DB_BASENAME}-sq"; 
     DB_CATALOG="$CATALOG_BASENAME"
 fi  

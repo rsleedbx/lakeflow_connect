@@ -111,16 +111,20 @@ export RG_NAME=${RG_NAME:-${WHOAMI}-lfcs-rg}                # resource group nam
 # return 3 variables
 read_fqdn_dba_if_host(){
     # assume list
-    read -rd "\n" DB_HOST <<< "$(jq -r 'first(.[]) | .name' /tmp/az_stdout.$$ 2>/dev/null)" 
+    local x1=""
+    local x2=""
+    local x3=""
+    read -rd "\n" x1 <<< "$(jq -r 'first(.[]) | .name' /tmp/az_stdout.$$ 2>/dev/null)" 
     # assume not a list
-    if [[ -n "${DB_HOST}" ]]; then
-        read -rd "\n" DB_HOST_FQDN DBA_USERNAME <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null)) | .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+    if [[ -n "${x1}" ]]; then
+        read -rd "\n" x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null)) | .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
     else
-        read -rd "\n" DB_HOST <<< "$(jq -r '.name' /tmp/az_stdout.$$ 2>/dev/null)"
-        if [[ -n "${DB_HOST}" ]]; then
-            read -rd "\n" DB_HOST_FQDN DBA_USERNAME <<< "$(jq -r '.fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+        read -rd "\n" x1 <<< "$(jq -r '.name' /tmp/az_stdout.$$ 2>/dev/null)"
+        if [[ -n "${x1}" ]]; then
+            read -rd "\n" x2 x3 <<< "$(jq -r '.fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
         fi
     fi
+    if [[ -n $x1 && -n $x2 && -n $x3 ]]; then DB_HOST=x1; DB_HOST_FQDN=x2; DBA_USERNAME=x3; fi
 }
 
 
@@ -221,11 +225,13 @@ get_secrets_from_scope() {
     if ! DBX secrets list-secrets "${_SECRETS_SCOPE}"; then
         return 1
     fi
-    for k in key_value; do
+    for k in "key_value"; do
         if DBX secrets get-secret "${_SECRETS_SCOPE}" "${k}"; then
             v="$(jq -r '.value | @base64d' /tmp/dbx_stdout.$$)"
-            eval "$v"
-            #echo "$v retrieved from databricks secrets" # DEBUG
+            if [[ -n $v ]]; then 
+                eval "$v"
+                #echo "$v retrieved from databricks secrets" # DEBUG
+            fi
         fi
     done
 }

@@ -12,8 +12,17 @@ fi
 export AZ_DB_TYPE=zmi
 
 # #############################################################################
+# load secrets if exists
+
+echo -e "\nLoading previous secrets \n"
+
+get_secrets
+
+# #############################################################################
 # check if sql server if exists
-if [[ -z "$DB_HOST" || "$DB_HOST" != *"$-mi" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zmi" ]]; then
+if [[ -z "$DB_HOST" || "$DB_HOST" != *"$-mi" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && \
+    [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zmi" ]]; then
+
     if AZ sql mi list -g "${RG_NAME}"; then
         read_fqdn_dba_if_host     
         set_mi_fqdn_dba_host
@@ -136,7 +145,7 @@ if ! AZ sql mi show --name "${DB_HOST}"; then
     fi
     DB_HOST_CREATED=1
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql mi delete -y -n "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql mi delete -y -n "$DB_HOST" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
     fi
 else
     echo "AZ sql mi ${DB_HOST}: exists"
@@ -167,7 +176,7 @@ if ! AZ sql midb show -n "${DB_CATALOG}" --mi "${DB_HOST}" -g "${RG_NAME}"; then
         return 1
     fi
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql midb delete -y -n "${DB_CATALOG}" --mi "$DB_HOST" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql midb delete -y -n "${DB_CATALOG}" --mi "$DB_HOST" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
     fi    
 else
     echo "AZ sql midb ${DB_CATALOG}: exists"
@@ -214,6 +223,11 @@ if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT
         cat /tmp/az_stderr.$$; return 1;
     fi
 fi
+
+# #############################################################################
+# save the credentials to secrets store for reuse
+
+put_secrets
 
 # #############################################################################
 echo "Billing ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"

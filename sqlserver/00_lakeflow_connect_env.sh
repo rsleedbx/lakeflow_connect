@@ -206,7 +206,7 @@ get_secrets_from_scope() {
         return 1
     fi
     for k in key_value; do
-        if DBX secrets get-secret "${_SECRETS_SCOPE}" "${k}" >/dev/null 2>&1; then
+        if DBX secrets get-secret "${_SECRETS_SCOPE}" "${k}"; then
             v="$(jq -r '.value | @base64d' /tmp/dbx_stdout.$$)"
             eval "$v"
             #echo "$v retrieved from databricks secrets"

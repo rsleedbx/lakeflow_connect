@@ -107,7 +107,8 @@ if ! AZ sql server show -n "${DB_HOST}" -g "${RG_NAME}"; then
     fi
     DB_HOST_CREATED="1"
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && az sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
     fi
 fi
 
@@ -139,7 +140,8 @@ if ! AZ sql db show -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
         fi
     fi 
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && az sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" >> ~/nohup.out 2>&1 &
+        # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
     fi
 fi
 

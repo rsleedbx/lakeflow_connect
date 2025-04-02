@@ -30,7 +30,9 @@ fi
 if ! declare -p PUT_DBX_SECRETS &> /dev/null; then
 export PUT_DBX_SECRETS=1
 fi
-export SECRETS_SCOPE="${SECRETS_SCOPE:-""}"  # secret scope being used
+# used to recover from invalid secrets load
+declare -A vars_before_secrets
+export vars_before_secrets
 
 # permissive firewall by default.  DO NOT USE WITH PRODUCTION SCHEMA or DATA
 export DB_FIREWALL_CIDRS="${DB_FIREWALL_CIDRS:-"0.0.0.0/0"}"
@@ -40,6 +42,7 @@ export CLOUD_LOCATION="${CLOUD_LOCATION:-"East US"}"
 export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
 
 export AZ_DB_TYPE=${AZ_DB_TYPE:-""}         # zmi|zsql
+
 export DB_HOST=${DB_HOST:-""}
 export DB_HOST_FQDN=${DB_HOST_FQDN:-""}
 export DB_CATALOG=${DB_CATALOG:-""}
@@ -103,10 +106,6 @@ if [[ -z "$DBX_USERNAME" ]]; then
 fi
 export DBX_USERNAME
 
-# used when creating.  preexisting db admin will be used
-export DBA_USERNAME=${DBA_USERNAME:-$(pwgen -1AB 16)}        # GCP hardcoded to defaults to sqlserver.  Make it same for Azure
-export USER_USERNAME=${USER_USERNAME:-$(pwgen -1AB 16)}      # set if not defined
-
 export RG_NAME=${RG_NAME:-${WHOAMI}-lfcs-rg}                # resource group name
 
 # return 3 variables
@@ -131,15 +130,20 @@ set_mi_fqdn_dba_host() {
     DB_HOST_FQDN="${DB_HOST_FQDN/${DB_HOST}./${DB_HOST}.public.}"
 }
 
+# used when creating.  preexisting db admin will be used
+export DBA_USERNAME=${DBA_USERNAME:-$(pwgen -1AB 16)}        # GCP hardcoded to defaults to sqlserver.  Make it same for Azure
+export USER_USERNAME=${USER_USERNAME:-$(pwgen -1AB 16)}      # set if not defined
+
 # DB and catalog basename
 export DB_BASENAME=${DB_BASENAME:-$(pwgen -1AB 8)}        # lower case, name seen on internet
 export CATALOG_BASENAME=${CATALOG_BASENAME:-$(pwgen -1AB 8)}
 
+# special char mess up eval and bash string substitution
+export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \[\]\!\=\~\^\$\;\(\)\:\.\*\@\\\>\`\"\'\| 32 )}"  # set if not defined
+export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \[\]\!\=\~\^\$\;\(\)\:\.\*\@\\\>\`\"\'\| 32 )}"  # set if not defined
+
 export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}}
 export DB_PORT=${DB_PORT:-1433}
-
-export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y -r \:\.\@\\\>\`\"\'\| 32 )}"  # set if not defined
-export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \:\.\@\\\>\`\"\'\| 32 )}"  # set if not defined
 
 # functions used 
 
@@ -173,6 +177,18 @@ test_db_connect() {
 
 # #############################################################################
 # retrieve setting from secrets if exists
+
+
+save_before_secrets() {
+    for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
+        vars_before_secrets["$k"]="${!k}"
+    done    
+}
+restore_before_secrets() {
+    for k in "${!vars_before_secrets[@]}"; do 
+        eval "$k='${vars_before_secrets["${k}"]}'"
+    done    
+}
 
 get_secrets() {
     local SECRETS_SCOPE_SEARCH=()
@@ -209,7 +225,7 @@ get_secrets_from_scope() {
         if DBX secrets get-secret "${_SECRETS_SCOPE}" "${k}"; then
             v="$(jq -r '.value | @base64d' /tmp/dbx_stdout.$$)"
             eval "$v"
-            #echo "$v retrieved from databricks secrets"
+            #echo "$v retrieved from databricks secrets" # DEBUG
         fi
     done
 }

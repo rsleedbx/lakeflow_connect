@@ -10,6 +10,7 @@ if [ "$0" == "$BASH_SOURCE" ]; then
 fi
 
 export AZ_DB_TYPE=zsql
+export SECRETS_SCOPE="${SECRETS_SCOPE:-""}"  # secret scope being used
 
 # #############################################################################
 # export functions
@@ -63,6 +64,7 @@ export -f show_firewall
 
 echo -e "\nLoading previous secrets \n"
 
+save_before_secrets
 get_secrets
 
 # #############################################################################
@@ -85,7 +87,12 @@ if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && \
     DB_CATALOG="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG) | .name)' /tmp/az_stdout.$$)"
 fi
 
-if [[ -z "$DB_HOST" ]] || [[ "$DB_HOST" != *"-sq" ]]; then DB_HOST="${DB_BASENAME}-sq"; fi  
+# secrets was empty or invalid.
+if [[ -z "${DBA_USERNAME}" || -z "${DB_CATALOG}" || -z "$DB_HOST" || "$DB_HOST" != *"-sq" ]]; then 
+    restore_before_secrets
+    DB_HOST="${DB_BASENAME}-sq"; 
+    DB_CATALOG="$CATALOG_BASENAME"
+fi  
 
 if [[ -n "$DB_HOST_FQDN" && -n "$DB_HOST" ]]; then
     echo "az sql server/catalog: $DB_HOST $DBA_USERNAME@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG"
@@ -145,9 +152,6 @@ if ! AZ sql db show -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
     fi
 fi
 
-# make sure user catalog is online
-start_db "skip_db_show"  
-
 echo "AZ sql db ${DB_CATALOG}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/servers/${DB_HOST}/databases/${DB_CATALOG}/overview"
 echo ""
 
@@ -195,6 +199,9 @@ if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT
         cat /tmp/az_stderr.$$; return 1;
     fi
 fi
+
+# make sure user catalog is online
+start_db
 
 # #############################################################################
 # save the credentials to secrets store for reuse

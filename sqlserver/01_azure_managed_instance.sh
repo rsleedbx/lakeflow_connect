@@ -10,12 +10,14 @@ if [ "$0" == "$BASH_SOURCE" ]; then
 fi
 
 export AZ_DB_TYPE=zmi
+export SECRETS_SCOPE="${SECRETS_SCOPE:-""}"  # secret scope being used
 
 # #############################################################################
 # load secrets if exists
 
 echo -e "\nLoading previous secrets \n"
 
+save_before_secrets
 get_secrets
 
 # #############################################################################
@@ -52,7 +54,13 @@ export subnet="${WHOAMI}-subnet"        #-$randomIdentifier"
 export nsg="${WHOAMI}-nsg"              #-$randomIdentifier"
 export route="${WHOAMI}-route"          #-$randomIdentifier"
 
-if [[ -z "$DB_HOST" ]] || [[ "$DB_HOST" != *"-mi" ]]; then DB_HOST="${DB_BASENAME}-mi"; fi  # cannot be underscore
+# secrets was empty or invalid.
+if [[ -z "${DBA_USERNAME}" || -z "${DB_CATALOG}" || -z "$DB_HOST" || "$DB_HOST" != *"-mi" ]]; then 
+    restore_before_secrets
+    DB_HOST="${DB_BASENAME}-sq"; 
+    DB_CATALOG="$CATALOG_BASENAME"
+fi  
+
 DB_PORT=3342
 
 start_db() {

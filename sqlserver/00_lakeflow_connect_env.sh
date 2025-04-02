@@ -280,5 +280,5 @@ if ! AZ configure --defaults group="${RG_NAME}"; then
     cat /tmp/az_stderr.$$; return 1
 fi
 
-echo "Billing ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
+echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
 

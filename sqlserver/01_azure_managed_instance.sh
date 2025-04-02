@@ -21,18 +21,27 @@ get_secrets
 
 # #############################################################################
 # check if sql server if exists
-if [[ -z "$DB_HOST" || "$DB_HOST" != *"$-mi" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && \
-    [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zmi" ]]; then
 
-    if AZ sql mi list -g "${RG_NAME}"; then
-        read_fqdn_dba_if_host     
+# make host name follow the naming convention
+if [[ -n "$DB_HOST" && "$DB_HOST" != *"-mi" ]]; then
+    DB_HOST=""
+    DB_HOST_FQDN=""
+fi
+
+if [[ -z "$DB_HOST" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && \
+    [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zmi" ]] && \
+    AZ sql mi list -g "${RG_NAME}"; then
+
+    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/managedInstances")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+    if [[ -n $x1 && -n $x2 && -n $x3 ]]; then 
+        DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; 
         set_mi_fqdn_dba_host
-        export DB_PORT=3342
     fi
+
     if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && AZ sql midb list --mi "$DB_HOST" -g "${RG_NAME}"; then
         echo "DB_CATALOG not set. checking az sql db list"
         x1="$(jq -r 'first(.[] | select(.name != "master") | .name)' /tmp/az_stdout.$$)"
-        if [[ -n $x1 ]]; then DB_CATALOG=x1; fi
+        if [[ -n $x1 ]]; then DB_CATALOG="$x1"; fi
     else
         DB_CATALOG="$CATALOG_BASENAME"
     fi
@@ -154,6 +163,11 @@ if ! AZ sql mi show --name "${DB_HOST}"; then
         nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql mi delete -y -n "$DB_HOST" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
     fi
 else
+    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/managedInstances") | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+    if [[ -z $x1 || -z $x2 || -z $x3 ]]; then 
+        echo "$DB_HOST is not a Microsoft.Sql/managedInstances"
+        return 1
+    fi
     echo "AZ sql mi ${DB_HOST}: exists"
 fi
 
@@ -166,7 +180,7 @@ if [[ "$(jq -r '.state' /tmp/az_stdout.$$)" != "Ready" ]]; then
     fi
 fi
 
-AZ configure --defaults managed-instance=$DB_HOST
+AZ configure --defaults managed-instance="$DB_HOST"
 echo ""
 
 echo "AZ sql mi ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/managedInstances/${DB_HOST}/overview"

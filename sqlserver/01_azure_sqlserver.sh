@@ -71,22 +71,33 @@ get_secrets
 
 echo -e "\nLoading available host and catalog if not specified \n"
 
+# make host name follow the naming convention
+if [[ -n "$DB_HOST" && "$DB_HOST" != *"-sq" ]]; then
+    DB_HOST=""
+    DB_HOST_FQDN=""
+fi
+
 # get avail sql server if not specified
-if  [[ -z "$DB_HOST" || "$DB_HOST" != *"-sq" || "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
+if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
     [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zsql" ]] && \
     AZ sql server list -g "${RG_NAME}"; then
     
     read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/servers")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
-    if [[ -n $x1 && -n $x2 && -n $x3 ]]; then DB_HOST=x1; DB_HOST_FQDN=x2; DBA_USERNAME=x3; fi
+    if [[ -n $x1 && -n $x2 && -n $x3 ]]; then DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; fi
 fi
+
 
 # get avail catalog if not specified
 if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && \
     AZ sql db list -s "$DB_HOST" -g "${RG_NAME}"; then
 
-    x1="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG) | .name)' /tmp/az_stdout.$$)"
-    if [[ -n $x1 ]]; then DB_CATALOG=x1; fi
-
+    # first free catalog?
+    x1="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG and .useFreeLimit == true) | .name)' /tmp/az_stdout.$$)"
+    if [[ -z $x1 ]]; then 
+        # first non free catalog?
+        x1="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG and .useFreeLimit == true) | .name)' /tmp/az_stdout.$$)"
+    fi
+    if [[ -n $x1 ]]; then DB_CATALOG="$x1"; fi
 fi
 
 # secrets was empty or invalid.
@@ -117,6 +128,12 @@ if ! AZ sql server show -n "${DB_HOST}" -g "${RG_NAME}"; then
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
         # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
         nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
+    fi
+else
+    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/servers") | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+    if [[ -z $x1 || -z $x2 || -z $x3 ]]; then 
+        echo "$DB_HOST is not a Microsoft.Sql/servers"
+        return 1
     fi
 fi
 

@@ -124,7 +124,7 @@ read_fqdn_dba_if_host(){
             read -rd "\n" x2 x3 <<< "$(jq -r '.fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
         fi
     fi
-    if [[ -n $x1 && -n $x2 && -n $x3 ]]; then DB_HOST=x1; DB_HOST_FQDN=x2; DBA_USERNAME=x3; fi
+    if [[ -n $x1 && -n $x2 && -n $x3 ]]; then DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; fi
 }
 
 
@@ -196,7 +196,7 @@ restore_before_secrets() {
 
 get_secrets() {
     local SECRETS_SCOPE_SEARCH=()
-    if [[ -n "${GET_DBX_SECRETS}" || -n "${PUT_DBX_SECRETS}" ]]; then
+    if [[ "${GET_DBX_SECRETS}" == "1" || "${PUT_DBX_SECRETS}" == "1" ]]; then
         if [[ -z "${SECRETS_SCOPE}" ]]; then
             SECRETS_SCOPE_SEARCH=("${RG_NAME}_${AZ_DB_TYPE}" "${RG_NAME}")
         else
@@ -206,7 +206,7 @@ get_secrets() {
     SECRETS_SCOPE="${RG_NAME}_${AZ_DB_TYPE}"
     export SECRETS_SCOPE
 
-    if [[ -z "${GET_DBX_SECRETS}" ]]; then
+    if [[ "${GET_DBX_SECRETS}" != "1" ]]; then
         return 0
     fi
     
@@ -237,24 +237,24 @@ get_secrets_from_scope() {
 }
 
 put_secrets() {
-if [[ -n "${PUT_DBX_SECRETS}" && -n "${SECRETS_SCOPE}" ]] && [[ -z "${GET_DBX_SECRETS}" || -n "${DB_HOST_CREATED}" || -n "${DB_PASSWORD_CHANGED}" ]]; then
+    if [[ "${PUT_DBX_SECRETS}" == "1"  && -n "${SECRETS_SCOPE}" ]] && [[ "${GET_DBX_SECRETS}" != "1" || -n "${DB_HOST_CREATED}" || -n "${DB_PASSWORD_CHANGED}" ]]; then
 
-    local _SECRETS_SCOPE="${1:-${SECRETS_SCOPE}}"
-    if ! DBX secrets list-secrets "${_SECRETS_SCOPE}"; then
-        if ! DBX secrets create-scope "${_SECRETS_SCOPE}"; then
+        local _SECRETS_SCOPE="${1:-${SECRETS_SCOPE}}"
+        if ! DBX secrets list-secrets "${_SECRETS_SCOPE}"; then
+            if ! DBX secrets create-scope "${_SECRETS_SCOPE}"; then
+                cat /tmp/dbx_stderr.$$; return 1;
+            fi
+        fi
+        key_value=""
+        for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
+            key_value="export ${k}='${!k}';$key_value"
+        done
+        if ! DBX secrets put-secret "${_SECRETS_SCOPE}" "key_value" --string-value "$key_value"; then
             cat /tmp/dbx_stderr.$$; return 1;
         fi
     fi
-    echo "Creating secrets"
-    key_value=""
-    for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
-        key_value="export ${k}='${!k}';$key_value"
-    done
-    if ! DBX secrets put-secret "${_SECRETS_SCOPE}" "key_value" --string-value "$key_value"; then
-        cat /tmp/dbx_stderr.$$; return 1;
-    fi
-fi
 }
+export put_secrets
 
 # #############################################################################
 

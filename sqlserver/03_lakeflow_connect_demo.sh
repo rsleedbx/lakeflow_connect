@@ -80,6 +80,7 @@ if ! DBX connections get "$CONNECTION_NAME"; then
     fi
     if [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
         nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
+        echo "Deleting connection ${CONNECTION_NAME} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!" 
     fi
 else
   # in case password is updated

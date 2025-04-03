@@ -240,7 +240,7 @@ SQLCMD -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "
 if [[ ! -s /tmp/sqlcmd_stdout.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
     nohup sleep "${DELETE_DB_AFTER_SLEEP}" && SQLCMD -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" \
     -Q "drop table [${DB_SCHEMA}].[intpk]; drop table [${DB_SCHEMA}].[dtix]; drop schema [${DB_SCHEMA}];" >> ~/nohup.out 2>&1 &
-    echo -e "\nDeleting schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n" 
+    echo -e "\nDeleting ${DB_SCHEMA} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n" 
 fi
 
 # #############################################################################
@@ -316,7 +316,3 @@ else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 
 fi
 
-# #############################################################################
-
-# show any deletes
-jobs

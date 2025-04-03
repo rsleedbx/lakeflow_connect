@@ -304,6 +304,3 @@ echo -e "Job           : ${DATABRICKS_HOST}/jobs/$INGESTION_JOB_ID \n"
 
 if ! DBX pipelines list-pipelines --filter "name like 'robertlee_%'"; then cat /tmp/dbx_stderr.$$; return 1; fi
 jq --arg url "$DATABRICKS_HOST" -r 'sort_by(.name) | .[] | [ .name, .pipeline_id, .state, ($url + "/pipelines/" + .pipeline_id) ] | @tsv' /tmp/dbx_stdout.$$ 
-
-# show any deletes
-jobs

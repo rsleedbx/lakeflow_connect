@@ -52,8 +52,8 @@ if [[ -z "$DB_HOST" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && \
         DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; 
         set_mi_fqdn_dba_host
     fi
-
-    if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && AZ sql midb list --mi "$DB_HOST" -g "${RG_NAME}"; then
+    
+    if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]] && AZ sql midb list --mi "$DB_HOST" -g "${RG_NAME}"; then
         echo "DB_CATALOG not set. checking az sql db list"
         x1="$(jq -r 'first(.[] | select(.name != "master") | .name)' /tmp/az_stdout.$$)"
         if [[ -n $x1 ]]; then DB_CATALOG="$x1"; fi
@@ -247,15 +247,18 @@ echo -e "AZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az
 
 echo -e "\nValidate or reset root password.  Could take 5min if resetting\n"
 
+export DB_PASSWORD_CHANGED=""
 if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
     if [[ -n "$DB_HOST_CREATED" ]]; then
         echo "can't connect to newly created host"
         return 1;
     fi
-    if ! AZ sql mi update --admin-password "${DBA_PASSWORD}" -n "${DB_HOST}" --mi "${DB_HOST}" -g "${RG_NAME}"; then
+    if ! AZ sql mi update --admin-password "${DBA_PASSWORD}" -n "${DB_HOST}" -g "${RG_NAME}"; then
         cat /tmp/az_stderr.$$
         return 1    
     fi
+
+    DB_PASSWORD_CHANGED="1"
     if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
         cat /tmp/az_stderr.$$; return 1;
     fi
@@ -271,5 +274,3 @@ echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDoma
 
 az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
 
-# show any deletes
-jobs

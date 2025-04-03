@@ -102,7 +102,7 @@ fi
 
 
 # get avail catalog if not specified
-if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" ]] && \
+if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]] && \
     AZ sql db list -s "$DB_HOST" -g "${RG_NAME}"; then
 
     # first free catalog?
@@ -249,6 +249,3 @@ echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDoma
 echo ""
 
 az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
-
-# show any deletes
-jobs

@@ -59,6 +59,9 @@ AZ() {
     PWMASK="$@"
     PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+    PWMASK="${PWMASK//$az_tenantDefaultDomain/\$az_tenantDefaultDomain}"
+    PWMASK="${PWMASK//$az_id/\$az_id}"
+    PWMASK="${PWMASK//$az_user_name/\$az_user_name}"
     echo -n az "${PWMASK}"
     az "$@" >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
     rc=$?
@@ -76,6 +79,7 @@ local rc
     PWMASK="$@"
     PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+    PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
     echo -n databricks "${PWMASK}"
     databricks ${DATABRICKS_CONFIG_PROFILE:+--profile "$DATABRICKS_CONFIG_PROFILE"} "$@" >/tmp/dbx_stdout.$$ 2>/tmp/dbx_stderr.$$
     rc=$?

@@ -40,7 +40,7 @@ if [[ -z "$DB_HOST" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && \
     [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zmi" ]] && \
     AZ sql mi list -g "${RG_NAME}"; then
 
-    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/managedInstances")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/managedInstances" and .provisioningState!="Deleting")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
     if [[ -n $x1 && -n $x2 && -n $x3 ]]; then 
         DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; 
         set_mi_fqdn_dba_host
@@ -60,7 +60,6 @@ export NINE_CHAR_ID
 
 # Variable block
 export "randomIdentifier=$NINE_CHAR_ID"
-export CLOUD_LOCATION="${CLOUD_LOCATION:-westus}"   # "East US" required for Freemium
 export tag="create-managed-instance"
 export vNet="${WHOAMI}-vnet"            #-$randomIdentifier"
 export subnet="${WHOAMI}-subnet"        #-$randomIdentifier"

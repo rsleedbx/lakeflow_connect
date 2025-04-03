@@ -43,7 +43,7 @@ if [[ -n "$DB_HOST" && "$DB_HOST" != *"-${AZ_DB_SUFFIX}" ]]; then
     DB_HOST_FQDN=""
 fi
 
-if [[ -z "$DB_HOST" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && \
+if [[ -z "$DB_HOST" || "$DB_HOST_FQDN" != "$DB_HOST.public."* ]] && \
     [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zmi" ]] && \
     AZ sql mi list -g "${RG_NAME}"; then
 
@@ -52,7 +52,7 @@ if [[ -z "$DB_HOST" || "$DB_HOST_FQDN" != "$DB_HOST.*" ]] && \
         DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; 
         set_mi_fqdn_dba_host
     fi
-    
+
     if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]] && AZ sql midb list --mi "$DB_HOST" -g "${RG_NAME}"; then
         echo "DB_CATALOG not set. checking az sql db list"
         x1="$(jq -r 'first(.[] | select(.name != "master") | .name)' /tmp/az_stdout.$$)"

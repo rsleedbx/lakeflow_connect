@@ -22,7 +22,9 @@ if ! DBX auth env; then cat /tmp/dbx_stderr.$$; return 1; fi
 DATABRICKS_HOST=$(jq -r .env.DATABRICKS_HOST /tmp/dbx_stdout.$$)
 export DATABRICKS_HOST
 # used for connection
-CONNECTION_NAME=$(echo "${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr [.@] _)
+if [[ -z "$CONNECTION_NAME" ]]; then 
+    CONNECTION_NAME=$(echo "${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr [.@] _)
+fi
 export CONNECTION_NAME
 export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_GW
 export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_IG

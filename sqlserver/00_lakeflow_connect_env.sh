@@ -44,6 +44,8 @@ export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
 
 export AZ_DB_TYPE=${AZ_DB_TYPE:-""}         # zmi|zsql
 
+export CONNECTION_NAME="${CONNECTION_NAME:-""}"
+
 export DB_HOST=${DB_HOST:-""}
 export DB_HOST_FQDN=${DB_HOST_FQDN:-""}
 export DB_CATALOG=${DB_CATALOG:-""}
@@ -247,9 +249,8 @@ put_secrets() {
     if [[ "${PUT_DBX_SECRETS}" == "1"  && -n "${SECRETS_SCOPE}" ]] && \
     [[ "${GET_DBX_SECRETS}" != "1" || -n "${DB_HOST_CREATED}" || -n "${DB_PASSWORD_CHANGED}" || "${SECRETS_RETRIEVED}" != "1" ]]; then
 
-        local _SECRETS_SCOPE="${1:-${SECRETS_SCOPE}}"
-        if ! DBX secrets list-secrets "${_SECRETS_SCOPE}"; then
-            if ! DBX secrets create-scope "${_SECRETS_SCOPE}"; then
+        if ! DBX secrets list-secrets "${SECRETS_SCOPE}"; then
+            if ! DBX secrets create-scope "${SECRETS_SCOPE}"; then
                 cat /tmp/dbx_stderr.$$; return 1;
             fi
         fi
@@ -257,7 +258,7 @@ put_secrets() {
         for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
             key_value="export ${k}='${!k}';$key_value"
         done
-        if ! DBX secrets put-secret "${_SECRETS_SCOPE}" "key_value" --string-value "$key_value"; then
+        if ! DBX secrets put-secret "${SECRETS_SCOPE}" "key_value" --string-value "$key_value"; then
             cat /tmp/dbx_stderr.$$; return 1;
         fi
     fi

@@ -236,3 +236,6 @@ echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDoma
 echo ""
 
 az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
+
+# show any deletes
+jobs

@@ -317,3 +317,6 @@ else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 fi
 
 # #############################################################################
+
+# show any deletes
+jobs

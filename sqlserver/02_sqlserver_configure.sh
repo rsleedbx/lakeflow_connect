@@ -9,6 +9,27 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   return 1
 fi
 
+SQLCMD() {
+    PWMASK="$@"
+    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
+    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+    echo -n sqlcmd "${PWMASK}"
+    if ! [ -t 0 ]; then
+        # echo "redirect stdin"
+        sqlcmd "$@" >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
+    else
+        sqlcmd "$@" >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
+    fi    
+    rc=$?
+    if [[ "$rc" != "0" ]]; then
+
+        echo ". failed with $rc"
+        return 1
+    else
+        echo ""
+    fi
+}    
+
 # #############################################################################
 
 # connect to master catalog
@@ -212,11 +233,21 @@ esac
 
 # #############################################################################
 
+# create schema
+
+SQLCMD -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 10 -Q "create schema [${DB_SCHEMA}]"
+# /tmp/sqlcmd_stdout.$$ will be 0 if schema was created.  drop the schema when done
+if [[ ! -s /tmp/sqlcmd_stdout.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
+    nohup sleep "${DELETE_DB_AFTER_SLEEP}" && SQLCMD -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" \
+    -Q "drop table [${DB_SCHEMA}].[intpk]; drop table [${DB_SCHEMA}].[dtix]; drop schema [${DB_SCHEMA}];" >> ~/nohup.out 2>&1 &
+    echo "Deleting schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!" 
+fi
+
+# #############################################################################
+
 # create tables
 
 cat <<EOF | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
-create schema [${DB_SCHEMA}]
-go
 create table [${DB_SCHEMA}].[intpk] (pk int IDENTITY NOT NULL primary key, dt datetime)
 go
 create table [${DB_SCHEMA}].[dtix] (dt datetime)

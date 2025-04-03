@@ -34,6 +34,7 @@ fi
 declare -A vars_before_secrets
 export vars_before_secrets
 export SECRETS_RETRIEVED=0  # indicate secrets was successfully retrieved
+export SECRETS_DBX_PROFILE=${SECRETS_DBX_PROFILE:-"DEFAULT"}
 
 # permissive firewall by default.  DO NOT USE WITH PRODUCTION SCHEMA or DATA
 export DB_FIREWALL_CIDRS="${DB_FIREWALL_CIDRS:-"0.0.0.0/0"}"
@@ -83,7 +84,7 @@ local rc
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
     PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
     echo -n databricks "${PWMASK}"
-    databricks ${DATABRICKS_CONFIG_PROFILE:+--profile "$DATABRICKS_CONFIG_PROFILE"} "$@" >/tmp/dbx_stdout.$$ 2>/tmp/dbx_stderr.$$
+    databricks "$@" >/tmp/dbx_stdout.$$ 2>/tmp/dbx_stderr.$$
     rc=$?
     if [[ "$rc" != "0" ]]; then
         echo " failed with $rc"
@@ -202,43 +203,16 @@ restore_before_secrets() {
 }
 
 get_secrets() {
-    local SECRETS_SCOPE_SEARCH=()
-    if [[ "${GET_DBX_SECRETS}" == "1" || "${PUT_DBX_SECRETS}" == "1" ]]; then
-        if [[ -z "${SECRETS_SCOPE}" ]]; then
-            SECRETS_SCOPE_SEARCH=("${RG_NAME}_${AZ_DB_TYPE}" "${RG_NAME}")
-        else
-            SECRETS_SCOPE_SEARCH=("${SECRETS_SCOPE}")
-        fi
-    fi
-    SECRETS_SCOPE="${RG_NAME}_${AZ_DB_TYPE}"
-    export SECRETS_SCOPE
 
-    if [[ "${GET_DBX_SECRETS}" != "1" ]]; then
-        return 0
-    fi
-    
-    for s in "${SECRETS_SCOPE_SEARCH[@]}"; do 
-        if get_secrets_from_scope "${s}"; then
-            SECRETS_SCOPE=${s}
-            export SECRETS_SCOPE
-            SECRETS_RETRIEVED=1
-            export SECRETS_RETRIEVED
-            break
-        fi
-    done
-}
-
-get_secrets_from_scope() {
-
-    local _SECRETS_SCOPE="${1:-${SECRETS_SCOPE}}"
-    if ! DBX secrets list-secrets "${_SECRETS_SCOPE}"; then
+    if ! DBX ${SECRETS_DBX_PROFILE:+"--profile" "$SECRETS_DBX_PROFILE"} secrets list-secrets "${SECRETS_SCOPE}"; then
         return 1
     fi
     for k in "key_value"; do
-        if DBX secrets get-secret "${_SECRETS_SCOPE}" "${k}"; then
+        if DBX ${SECRETS_DBX_PROFILE:+"--profile" "$SECRETS_DBX_PROFILE"} secrets get-secret "${SECRETS_SCOPE}" "${k}"; then
             v="$(jq -r '.value | @base64d' /tmp/dbx_stdout.$$)"
             if [[ -n $v ]]; then 
                 eval "$v"
+                SECRETS_RETRIEVED=1 
                 #echo "$v retrieved from databricks secrets" # DEBUG
             fi
         fi
@@ -249,8 +223,8 @@ put_secrets() {
     if [[ "${PUT_DBX_SECRETS}" == "1"  && -n "${SECRETS_SCOPE}" ]] && \
     [[ "${GET_DBX_SECRETS}" != "1" || -n "${DB_HOST_CREATED}" || -n "${DB_PASSWORD_CHANGED}" || "${SECRETS_RETRIEVED}" != "1" ]]; then
 
-        if ! DBX secrets list-secrets "${SECRETS_SCOPE}"; then
-            if ! DBX secrets create-scope "${SECRETS_SCOPE}"; then
+        if ! DBX ${SECRETS_DBX_PROFILE:+"--profile" "$SECRETS_DBX_PROFILE"} secrets list-secrets "${SECRETS_SCOPE}"; then
+            if ! DBX ${SECRETS_DBX_PROFILE:+"--profile" "$SECRETS_DBX_PROFILE"} secrets create-scope "${SECRETS_SCOPE}"; then
                 cat /tmp/dbx_stderr.$$; return 1;
             fi
         fi
@@ -258,7 +232,7 @@ put_secrets() {
         for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
             key_value="export ${k}='${!k}';$key_value"
         done
-        if ! DBX secrets put-secret "${SECRETS_SCOPE}" "key_value" --string-value "$key_value"; then
+        if ! DBX ${SECRETS_DBX_PROFILE:+"--profile" "$SECRETS_DBX_PROFILE"} secrets put-secret "${SECRETS_SCOPE}" "key_value" --string-value "$key_value"; then
             cat /tmp/dbx_stderr.$$; return 1;
         fi
     fi

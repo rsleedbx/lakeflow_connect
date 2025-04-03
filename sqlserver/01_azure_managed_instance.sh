@@ -14,8 +14,15 @@ export AZ_DB_SUFFIX=mi
 export SECRETS_SCOPE="${SECRETS_SCOPE:-""}"  # secret scope being used
 
 # reset to auto if SECRETS_SCOPE does not have right suffix
-if [[ -n "$SECRETS_SCOPE" && "$SECRETS_SCOPE" != *"-${AZ_DB_TYPE}" ]]; then
+if [[ "${RG_NAME}" == "lfcs-demo-rg" && "${SECRETS_SCOPE}" != "${RG_NAME}-${AZ_DB_TYPE}" ]]; then
+    SECRETS_SCOPE="${RG_NAME}-${AZ_DB_TYPE}"
+    CONNECTION_NAME="${SECRETS_SCOPE}"
+    echo -e "\n Changing the shared database\n"
+    echo -e "SECRETS_SCOPE=$SECRETS_SCOPE"
+    echo -e "CONNECTION_NAME=$CONNECTION_NAME"
+elif [[ -n "$SECRETS_SCOPE" && "$SECRETS_SCOPE" != *"-${AZ_DB_TYPE}" ]]; then
     SECRETS_SCOPE=""
+    echo -e "SECRETS_SCOPE=$SECRETS_SCOPE"
 fi
 
 # #############################################################################

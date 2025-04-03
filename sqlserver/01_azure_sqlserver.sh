@@ -73,6 +73,23 @@ show_firewall() {
 }
 export -f show_firewall
 
+firewall_rule_add() {
+for fw_rule in "${@}"; do
+    read -rd "\n" address host_min host_max <<< \
+        "$(ipcalc -bn "${fw_rule}" | awk -F'[:[:space:]]+' '/^HostMin|^HostMax|^Address/ {print $(NF-1)}')"
+    fw_rule_name="$(echo "${fw_rule}" | tr [./] _)"
+    if [[ -z $host_min || -z $host_max ]]; then
+        echo "${fw_rule} did not produce correct ${host_min} and/or ${host_max}.  Assuming /32"
+        host_min="$address"
+        host_max="$address"
+    fi
+    if ! AZ sql server firewall-rule show -n "${fw_rule_name}" -s "${DB_HOST}" -g "${RG_NAME}"; then
+        if ! AZ sql server firewall-rule create -n "${fw_rule_name}" -s "$DB_HOST" -g "${RG_NAME}" --start-ip-address ${host_min} --end-ip-address "${host_max}"; then
+            cat /tmp/az_stderr.$$; return 1;
+        fi
+    fi
+done
+}
 # #############################################################################
 # load secrets if exists
 
@@ -199,18 +216,7 @@ echo -e "Creating permissive firewall rules if not exists\n"
 
 if ! AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
 if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
-    for fw_rule in "${DB_FIREWALL_CIDRS[@]}"; do # "${array[@]}" = single word at a time
-        read -rd "\n" host_min host_max <<< \
-            "$(ipcalc -bn "${fw_rule}" | awk -F'[:[:space:]]+' '/^HostMin|^HostMax/ {print $(NF-1)}')"
-        fw_rule_name="$(echo "${fw_rule}" | tr [./] _)"
-        if [[ -z $host_min || -z $host_max ]]; then
-            echo "${fw_rule} did not produce correct ${host_min} and/or ${host_max}"
-        elif ! AZ sql server firewall-rule show -n "${fw_rule_name}" -s "${DB_HOST}" -g "${RG_NAME}"; then
-            if ! AZ sql server firewall-rule create -n "${fw_rule_name}" -s "$DB_HOST" -g "${RG_NAME}" --start-ip-address ${host_min} --end-ip-address "${host_max}"; then
-                cat /tmp/az_stderr.$$; return 1;
-            fi
-        fi
-    done 
+    firewall_rule_add "${DB_FIREWALL_CIDRS[@]}"
 fi
 
 echo "AZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/servers/${DB_HOST}/networking"

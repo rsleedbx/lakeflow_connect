@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# error out when undeclared variable is used
+set -u 
+
 # must be sourced for exports to continue to the next script
 if [ "$0" == "$BASH_SOURCE" ]; then
   echo "Script is being executed directly. Please run as source $0"
@@ -7,147 +10,42 @@ if [ "$0" == "$BASH_SOURCE" ]; then
 fi
 
 export AZ_DB_TYPE=zsql
+export AZ_DB_SUFFIX=sq
+export SECRETS_SCOPE="${SECRETS_SCOPE:-""}"  # secret scope being used
 
-if [[ -z $DBX_USERNAME ]] || \
- [[ -z $WHOAMI ]] || \
- [[ -z $EXPIRE_DATE ]] || \
- [[ -z $DB_CATALOG ]] || \
- [[ -z $DB_SCHEMA ]] || \
- [[ -z $DB_HOST ]] || \
- [[ -z $DB_PORT ]] || \
- [[ -z $DBA_PASSWORD ]] || \
- [[ -z $USER_PASSWORD ]] || \
- [[ -z $DBA_USERNAME ]] || \
- [[ -z $USER_USERNAME ]] || \
- [[ -z $DB_HOST ]] || \
- [[ -z $DB_HOST_FQDN ]]; then 
-    if [[ -f ./00_lakeflow_connect_env.sh ]]; then
-        source ./00_lakeflow_connect_env.sh
-    else
-        source <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/sqlserver/sqlserver/00_lakeflow_connect_env.sh)
+# reset to auto if SECRETS_SCOPE does not have right suffix
+if [[ "${RG_NAME}" == "lfcs-demo-rg" && "${SECRETS_SCOPE}" != "${RG_NAME}-${AZ_DB_TYPE}" ]]; then
+    SECRETS_SCOPE="${RG_NAME}-${AZ_DB_TYPE}"
+    CONNECTION_NAME="${SECRETS_SCOPE}"
+    echo -e "\nChanging the shared database\n"
+    echo -e "SECRETS_SCOPE=$SECRETS_SCOPE"
+    echo -e "CONNECTION_NAME=$CONNECTION_NAME"
+elif [[ -n "$SECRETS_SCOPE" && "$SECRETS_SCOPE" != *"-${AZ_DB_TYPE}" ]]; then
+    SECRETS_SCOPE=""
+    echo -e "SECRETS_SCOPE=$SECRETS_SCOPE"
+
+fi
+
+# #############################################################################
+# export functions
+
+password_reset_db() {
+    if ! AZ sql server update -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
+        cat /tmp/az_stderr.$$; return 1;
     fi
-fi
+}
+export -f password_reset_db
 
-# #############################################################################
+start_db() {
+    local skip_db_show="${1:-""}"
 
-export az_id=$(az account show | jq -r .id)
-export az_tenantDefaultDomain=$(az account show | jq -r .tenantDefaultDomain)
-
-if [[ -n "${CLOUD_LOCATION}" ]]; then 
-    az configure --defaults location="${CLOUD_LOCATION}"
-fi
-
-# #############################################################################
-# https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/manage-resource-groups-cli
-
-# multiples tags are defined correctly below.  NOT A MISTAKE
-az_group_show_output="$(az group show --resource-group "${WHOAMI}" --output table 2>/dev/null)"
-export az_group_show_output
-
-if [[ -z "$az_group_show_output" ]]; then
-    az_group_create_output=$(az group create --resource-group "${WHOAMI}" --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}")
-    export az_group_create_output
-    echo "az group ${WHOAMI}: created"
-else
-    echo "az group ${WHOAMI}: exists"
-fi
-az configure --defaults group="${WHOAMI}"
-
-az_group_show_output=$(az group show --resource-group "${WHOAMI}" --output table)
-
-echo "az group ${WHOAMI}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${WHOAMI}/overview"
-echo ""
-
-# #############################################################################
-
-az_sql_server_list_output="$(az sql server list --output table 2>/dev/null)"
-export az_sql_server_list_output
-
-if [[ -z "${az_sql_server_list_output}" ]]; then
-# name cannot have underscore
-    az_sql_server_create_output=$(az sql server create --name ${DB_HOST} \
-    --admin-user "${DBA_USERNAME}" \
-    --admin-password "${DBA_PASSWORD}"
-    )
-    echo "az sql ${DB_HOST}: created"
-else
-    echo "az sql ${DB_HOST}: exists"
-fi
-export az_sql_server_create_output
-
-# update password save to secrets
-SECRETS_DBA_PASSWORD="$(databricks secrets get-secret ${SECRETS_SCOPE} DBA_PASSWORD 2>/dev/null | jq -r .value | base64 --decode)"
-if [[ "$SECRETS_DBA_PASSWORD" != "$DBA_PASSWORD" ]]; then
-    # change the DBA password for case where server was already created
-    echo "az sql server update --name ${DB_HOST} --admin-password"
-    az sql server update --name ${DB_HOST} --admin-password "${DBA_PASSWORD}" >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    if [[ $? == 0 ]]; then
-        databricks secrets create-scope ${SECRETS_SCOPE} 2>/dev/null 
-        databricks secrets put-secret ${SECRETS_SCOPE} DBA_PASSWORD --string-value "${DBA_PASSWORD}"
-        databricks secrets put-secret ${SECRETS_SCOPE} DBA_USERNAME --string-value "${DBA_USERNAME}"
-    else
-        echo "az sql server update --name ${DB_HOST} failed"
-        if [ "$0" == "$BASH_SOURCE" ]; then return 1; else return 1; fi
+    if [[ -z "$skip_db_show" ]] && ! AZ sql db show -n "$DB_CATALOG" -s "$DB_HOST" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
+    if [[ "Online" == "$(jq -r '.state' /tmp/az_stdout.$$)" ]]; then CONNECT_TIMEOUT=10; else CONNECT_TIMEOUT=120; fi
+    if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG" "$CONNECT_TIMEOUT"; then
+        cat /tmp/az_stderr.$$; return 1;
     fi
-fi
-
-export DB_HOST_FQDN=$(az sql server show --name $DB_HOST | jq -r .fullyQualifiedDomainName)
-az_sql_server_list_output="$(az sql server list --output table)"
-az configure --defaults sql-server=${DB_HOST}
-
-echo "az sql ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${WHOAMI}/providers/Microsoft.Sql/servers/${DB_HOST}/overview"
-echo ""
-
-# #############################################################################
-
-az_sql_db_list_output=$(az sql db show --name ${DB_CATALOG} --output table 2>/dev/null)
-export az_sql_db_list_output
-
-if [[ -z "${az_sql_db_list_output}" ]]; then
-    # try free first
-    echo "az sql db ${DB_CATALOG}: trying --use-free-limit"
-    az_sql_db_create_output=$(az sql db create --name "${DB_CATALOG}" -e GeneralPurpose -f Gen5 -c 1 \
-    --compute-model Serverless --backup-storage-redundancy Local \
-    --zone-redundant false --exhaustion-behavior AutoPause --use-free-limit 2>/dev/null 
-    )
-    # if not free, then use paid plan
-    if [[ $? != 0 ]]; then
-        echo "az sql db ${DB_CATALOG}: trying paid plan"
-        az_sql_db_create_output=$(az sql db create --name "${DB_CATALOG}" -e GeneralPurpose -f Gen5 -c 1 \
-        --compute-model Serverless --backup-storage-redundancy Local \
-        --zone-redundant false --exhaustion-behavior AutoPause --auto-pause-delay 15
-        )
-    fi 
-    echo "az sql db ${DB_CATALOG}: created"
-else
-    echo "az sql db ${DB_CATALOG}: exists"
-fi
-export az_sql_db_create_output
-
-az_sql_db_list_output=$(az sql db list --output table)
-
-echo "az sql db ${DB_CATALOG}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${WHOAMI}/providers/Microsoft.Sql/servers/${DB_HOST}/databases/${DB_CATALOG}/overview"
-echo ""
-
-# #############################################################################
-
-# Run firewall rules before coming here
-az_sql_server_firewall_rules_output="$(az sql server firewall-rule list)"
-export az_sql_server_firewall_rules_output
-
-if [[ -z "${az_sql_server_firewall_rules_output}" ]]; then
-    echo "az sql server firewall-rule ${DB_HOST}: MAKE SURE TO CONFIGURE FIREWALL RULES"
-else
-    echo "az sql server firewall-rule ${DB_HOST}: exists"
-fi
-
-echo "az sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${WHOAMI}/providers/Microsoft.Sql/servers/${DB_HOST}/networking"
-echo ""
-
-# #############################################################################
-echo "Billing : https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis"
-echo ""
-
+}
+export -f start_db
 
 stop_db() {
     echo "stop db not required"
@@ -155,8 +53,205 @@ stop_db() {
 export -f stop_db
 
 delete_db() {
-    echo "az sql ${DB_HOST}: delete started"
-    az sql server delete --name "${DB_HOST}"
-    echo "az sql ${DB_HOST}: delete completed"
+    if ! AZ sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}"; then 
+        cat /tmp/az_stderr.$$; return 1;
+    fi
 }
 export -f delete_db
+
+delete_catalog() {
+    if ! AZ sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then 
+        cat /tmp/az_stderr.$$; return 1;
+    fi
+}
+export -f delete_catalog
+
+show_firewall() {
+    if ! AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"; then 
+        cat /tmp/az_stderr.$$; return 1;
+    fi
+}
+export -f show_firewall
+
+firewall_rule_add() {
+for fw_rule in "${@}"; do
+    read -rd "\n" address host_min host_max <<< \
+        "$(ipcalc -bn "${fw_rule}" | awk -F'[:[:space:]]+' '/^HostMin|^HostMax|^Address/ {print $(NF-1)}')"
+    fw_rule_name="$(echo "${fw_rule}" | tr [./] _)"
+    if [[ -z $host_min || -z $host_max ]]; then
+        echo "${fw_rule} did not produce correct ${host_min} and/or ${host_max}.  Assuming /32"
+        host_min="$address"
+        host_max="$address"
+    fi
+    if ! AZ sql server firewall-rule show -n "${fw_rule_name}" -s "${DB_HOST}" -g "${RG_NAME}"; then
+        if ! AZ sql server firewall-rule create -n "${fw_rule_name}" -s "$DB_HOST" -g "${RG_NAME}" --start-ip-address ${host_min} --end-ip-address "${host_max}"; then
+            cat /tmp/az_stderr.$$; return 1;
+        fi
+    fi
+done
+}
+# #############################################################################
+# load secrets if exists
+
+echo -e "\nLoading previous secrets \n"
+
+get_secrets
+
+# #############################################################################
+# set default host and catalog if not specified
+
+echo -e "\nLoading available host and catalog if not specified \n"
+
+# make host name follow the naming convention
+if [[ -n "$DB_HOST" && "$DB_HOST" != *"-${AZ_DB_SUFFIX}" ]]; then
+    DB_HOST=""
+    DB_HOST_FQDN=""
+fi
+
+# get avail sql server if not specified
+if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
+    [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zsql" ]] && \
+    AZ sql server list -g "${RG_NAME}"; then
+    
+    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/servers")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+    if [[ -n $x1 && -n $x2 && -n $x3 ]]; then DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; fi
+fi
+
+
+# get avail catalog if not specified
+if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]] && \
+    AZ sql db list -s "$DB_HOST" -g "${RG_NAME}"; then
+
+    # first free catalog?
+    x1="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG and .useFreeLimit == true) | .name)' /tmp/az_stdout.$$)"
+    if [[ -z $x1 ]]; then 
+        # first non free catalog?
+        x1="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG and .useFreeLimit == true) | .name)' /tmp/az_stdout.$$)"
+    fi
+    if [[ -n $x1 ]]; then DB_CATALOG="$x1"; fi
+fi
+
+# secrets was empty or invalid.
+if [[ -z "${DBA_USERNAME}" || -z "${DB_CATALOG}" || -z "$DB_HOST" || "$DB_HOST" != *"-${AZ_DB_SUFFIX}" ]]; then 
+    DB_HOST="${DB_BASENAME}-${AZ_DB_SUFFIX}"; 
+    DB_CATALOG="$CATALOG_BASENAME"
+fi  
+
+if [[ -n "$DB_HOST_FQDN" && -n "$DB_HOST" ]]; then
+    echo "az sql server/catalog: $DB_HOST $DBA_USERNAME@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG"
+fi
+
+export DB_PORT=1433
+
+# #############################################################################
+# create sql server
+
+echo -e "\nCreate sql server if not exists\n"
+
+export DB_HOST_CREATED=""
+if ! AZ sql server show -n "${DB_HOST}" -g "${RG_NAME}"; then
+    if ! AZ sql server create -n "${DB_HOST}" -g "${RG_NAME}" \
+        --admin-user "${DBA_USERNAME}" \
+        --admin-password "${DBA_PASSWORD}"; then
+        cat /tmp/az_stderr.$$; return 1;
+    fi
+    DB_HOST_CREATED="1"
+    if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
+        # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
+        echo -e "\nDeleting sqlserver ${DB_HOST} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
+    fi
+else
+    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/servers") | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+    if [[ -z $x1 || -z $x2 || -z $x3 ]]; then 
+        echo "$DB_HOST is not a Microsoft.Sql/servers"
+        return 1
+    fi
+fi
+
+read_fqdn_dba_if_host
+if ! AZ configure --defaults sql-server="${DB_HOST}"; then
+    cat /tmp/az_stderr.$$; return 1;
+fi
+
+echo "AZ sql ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/servers/${DB_HOST}/overview"
+echo ""
+
+# #############################################################################
+# create catalog if not existss - free, if not avail, then paid version
+
+echo -e "\nCreate catalog if not exists\n" 
+
+if ! AZ sql db show -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
+
+    if ! AZ sql db create -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
+        --compute-model Serverless --backup-storage-redundancy Local \
+        --zone-redundant false --exhaustion-behavior AutoPause --use-free-limit \
+         ; then 
+
+        if ! AZ sql db create -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
+            --compute-model Serverless --backup-storage-redundancy Local \
+            --zone-redundant false --exhaustion-behavior AutoPause --auto-pause-delay 15 \
+             ; then
+            cat /tmp/az_stderr.$$; return 1;
+        fi
+    fi 
+    if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
+        # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
+        echo -e "\nDeleting catalog ${DB_CATALOG} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
+    fi
+fi
+
+echo "AZ sql db ${DB_CATALOG}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/servers/${DB_HOST}/databases/${DB_CATALOG}/overview"
+echo ""
+
+# #############################################################################
+
+# Run firewall rules before coming here
+
+echo -e "Creating permissive firewall rules if not exists\n"
+
+# convert CIDR to range 
+
+if ! AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
+if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
+    firewall_rule_add "${DB_FIREWALL_CIDRS[@]}"
+fi
+
+echo "AZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/servers/${DB_HOST}/networking"
+echo ""
+
+# #############################################################################
+# Check password
+
+echo -e "\nValidate or reset root password.  Could take 5min if resetting\n"
+
+export DB_PASSWORD_CHANGED=""
+if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
+    if [[ -n "$DB_HOST_CREATED" ]]; then
+        echo "can't connect to newly created host"
+        return 1;
+    fi
+
+    password_reset_db
+
+    DB_PASSWORD_CHANGED="1"
+    if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
+        cat /tmp/az_stderr.$$; return 1;
+    fi
+fi
+
+# make sure user catalog is online
+start_db
+
+# #############################################################################
+# save the credentials to secrets store for reuse
+
+put_secrets
+
+# #############################################################################
+echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
+echo ""
+
+az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table

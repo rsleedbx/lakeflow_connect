@@ -13,6 +13,11 @@ export AZ_DB_TYPE=zsql
 export AZ_DB_SUFFIX=sq
 export SECRETS_SCOPE="${SECRETS_SCOPE:-""}"  # secret scope being used
 
+# reset to auto if SECRETS_SCOPE does not have right suffix
+if [[ -n "$SECRETS_SCOPE" && "$SECRETS_SCOPE" != *"-${AZ_DB_TYPE}" ]]; then
+    SECRETS_SCOPE=""
+fi
+
 # #############################################################################
 # export functions
 
@@ -129,7 +134,7 @@ if ! AZ sql server show -n "${DB_HOST}" -g "${RG_NAME}"; then
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
         # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
         nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
-        echo "Deleting sqlserver ${DB_HOST} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!" 
+        echo -e "\nDeleting sqlserver ${DB_HOST} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi
 else
     read -rd "\n" x1 x2 x3 <<< "$(jq -r 'select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/servers") | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
@@ -169,7 +174,7 @@ if ! AZ sql db show -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
         # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
         nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
-        echo "Deleting catalog ${DB_CATALOG} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!" 
+        echo -e "\nDeleting catalog ${DB_CATALOG} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi
 fi
 

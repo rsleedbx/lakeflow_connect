@@ -13,6 +13,11 @@ export AZ_DB_TYPE=zmi
 export AZ_DB_SUFFIX=mi
 export SECRETS_SCOPE="${SECRETS_SCOPE:-""}"  # secret scope being used
 
+# reset to auto if SECRETS_SCOPE does not have right suffix
+if [[ -n "$SECRETS_SCOPE" && "$SECRETS_SCOPE" != *"-${AZ_DB_TYPE}" ]]; then
+    SECRETS_SCOPE=""
+fi
+
 # #############################################################################
 # load secrets if exists
 
@@ -165,7 +170,7 @@ if ! AZ sql mi show --name "${DB_HOST}"; then
     DB_HOST_CREATED=1
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
         nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql mi delete -y -n "$DB_HOST" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
-        echo "Deleting managed instance ${DB_HOST} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!" 
+        echo -e "\nDeleting managed instance ${DB_HOST} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi
 else
     read -rd "\n" x1 x2 <<< "$(jq -r 'select(.type == "Microsoft.Sql/managedInstances") | .name, .administratorLogin' /tmp/az_stdout.$$)"
@@ -202,7 +207,7 @@ if ! AZ sql midb show -n "${DB_CATALOG}" --mi "${DB_HOST}" -g "${RG_NAME}"; then
     fi
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
         nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql midb delete -y -n "${DB_CATALOG}" --mi "$DB_HOST" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
-        echo "Deleting catalog ${DB_CATALOG} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!" 
+        echo -e "\nDeleting catalog ${DB_CATALOG} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi    
 else
     echo "AZ sql midb ${DB_CATALOG}: exists"

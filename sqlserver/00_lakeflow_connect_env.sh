@@ -33,6 +33,7 @@ fi
 # used to recover from invalid secrets load
 declare -A vars_before_secrets
 export vars_before_secrets
+export SECRETS_RETRIEVED=0  # indicate secrets was successfully retrieved
 
 # permissive firewall by default.  DO NOT USE WITH PRODUCTION SCHEMA or DATA
 export DB_FIREWALL_CIDRS="${DB_FIREWALL_CIDRS:-"0.0.0.0/0"}"
@@ -214,6 +215,8 @@ get_secrets() {
         if get_secrets_from_scope "${s}"; then
             SECRETS_SCOPE=${s}
             export SECRETS_SCOPE
+            SECRETS_RETRIEVED=1
+            export SECRETS_RETRIEVED
             break
         fi
     done
@@ -237,7 +240,8 @@ get_secrets_from_scope() {
 }
 
 put_secrets() {
-    if [[ "${PUT_DBX_SECRETS}" == "1"  && -n "${SECRETS_SCOPE}" ]] && [[ "${GET_DBX_SECRETS}" != "1" || -n "${DB_HOST_CREATED}" || -n "${DB_PASSWORD_CHANGED}" ]]; then
+    if [[ "${PUT_DBX_SECRETS}" == "1"  && -n "${SECRETS_SCOPE}" ]] && \
+    [[ "${GET_DBX_SECRETS}" != "1" || -n "${DB_HOST_CREATED}" || -n "${DB_PASSWORD_CHANGED}" || "${SECRETS_RETRIEVED}" != "1" ]]; then
 
         local _SECRETS_SCOPE="${1:-${SECRETS_SCOPE}}"
         if ! DBX secrets list-secrets "${_SECRETS_SCOPE}"; then

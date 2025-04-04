@@ -11,7 +11,7 @@ Adjust to bigger capacity for a performance tests.=
 - Initialize environment variables
 
     ```bash
-    source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/01_lakeflow_connect_env.sh)
+    source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/00_lakeflow_connect_env.sh)
     ```
 
 - Start Azure SQL Server **or** Managed Instance 

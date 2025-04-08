@@ -34,7 +34,8 @@ fi
 declare -A vars_before_secrets
 export vars_before_secrets
 export SECRETS_RETRIEVED=0  # indicate secrets was successfully retrieved
-export SECRETS_DBX_PROFILE=${SECRETS_DBX_PROFILE:-"DEFAULT"}
+export DBX_PROFILE=${DBX_PROFILE:-"DEFAULT"}
+export DBX_PROFILE_SECRETS=${DBX_PROFILE_SECRETS:-"DEFAULT"}
 
 # permissive firewall by default.  DO NOT USE WITH PRODUCTION SCHEMA or DATA
 export DB_FIREWALL_CIDRS="${DB_FIREWALL_CIDRS:-"0.0.0.0/0"}"
@@ -94,7 +95,8 @@ local rc
     fi
 }
 
-export WHOAMI=${WHOAMI:-$(whoami | tr -d .)}
+export WHOAMI=${WHOAMI:-$(whoami)}
+WHOAMI="$(echo "$WHOAMI" | tr -d '\-\.\_')"
 
 if ! AZ account show; then
     cat /tmp/dbx_stderr.$$ /tmp/az_stderr.$$
@@ -114,7 +116,7 @@ if [[ -z "$DBX_USERNAME" ]]; then
 fi
 export DBX_USERNAME
 
-export RG_NAME=${RG_NAME:-${WHOAMI}-lfcs-rg}                # resource group name
+export RG_NAME=${RG_NAME:-${WHOAMI}-rg}                # resource group name
 
 # return 3 variables
 read_fqdn_dba_if_host(){
@@ -156,6 +158,7 @@ export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \[\]\!\=\~\^\$\;\(\)\:\.\*
 
 export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}}
 export DB_PORT=${DB_PORT:-1433}
+export SECRETS_SCOPE=${SECRETS_SCOPE:-${WHOAMI}}
 
 # functions used 
 
@@ -203,38 +206,36 @@ restore_before_secrets() {
 }
 
 get_secrets() {
-
-    if ! DBX ${SECRETS_DBX_PROFILE:+"--profile" "$SECRETS_DBX_PROFILE"} secrets list-secrets "${SECRETS_SCOPE}"; then
+    local secrets_key=${1:-"key_value"}
+    if DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets get-secret "${SECRETS_SCOPE}" "${secrets_key}"; then
+        v="$(jq -r '.value | @base64d' /tmp/dbx_stdout.$$)"
+        if [[ -n $v ]]; then 
+            eval "$v"
+            SECRETS_RETRIEVED=1 
+            #echo "$v retrieved from databricks secrets" # DEBUG
+        else
+            return 1
+        fi
+    else
         return 1
     fi
-    for k in "key_value"; do
-        if DBX ${SECRETS_DBX_PROFILE:+"--profile" "$SECRETS_DBX_PROFILE"} secrets get-secret "${SECRETS_SCOPE}" "${k}"; then
-            v="$(jq -r '.value | @base64d' /tmp/dbx_stdout.$$)"
-            if [[ -n $v ]]; then 
-                eval "$v"
-                SECRETS_RETRIEVED=1 
-                #echo "$v retrieved from databricks secrets" # DEBUG
-            fi
-        fi
-    done
+
 }
 
 put_secrets() {
-    if [[ "${PUT_DBX_SECRETS}" == "1"  && -n "${SECRETS_SCOPE}" ]] && \
-    [[ "${GET_DBX_SECRETS}" != "1" || -n "${DB_HOST_CREATED}" || -n "${DB_PASSWORD_CHANGED}" || "${SECRETS_RETRIEVED}" != "1" ]]; then
-
-        if ! DBX ${SECRETS_DBX_PROFILE:+"--profile" "$SECRETS_DBX_PROFILE"} secrets list-secrets "${SECRETS_SCOPE}"; then
-            if ! DBX ${SECRETS_DBX_PROFILE:+"--profile" "$SECRETS_DBX_PROFILE"} secrets create-scope "${SECRETS_SCOPE}"; then
-                cat /tmp/dbx_stderr.$$; return 1;
-            fi
-        fi
-        key_value=""
-        for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
-            key_value="export ${k}='${!k}';$key_value"
-        done
-        if ! DBX ${SECRETS_DBX_PROFILE:+"--profile" "$SECRETS_DBX_PROFILE"} secrets put-secret "${SECRETS_SCOPE}" "key_value" --string-value "$key_value"; then
+    local secrets_key=${1:-"$DB_HOST"}
+    local key_value=""
+    # create secret scope if does not exist
+    if ! DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets list-secrets "${SECRETS_SCOPE}"; then
+        if ! DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets create-scope "${SECRETS_SCOPE}"; then
             cat /tmp/dbx_stderr.$$; return 1;
         fi
+    fi
+    for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
+        key_value="export ${k}='${!k}';$key_value"
+    done
+    if ! DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets put-secret "${SECRETS_SCOPE}" "${secrets_key}" --string-value "$key_value"; then
+        cat /tmp/dbx_stderr.$$; return 1;
     fi
 }
 export put_secrets
@@ -254,7 +255,8 @@ fi
 
 # multiples tags are defined correctly below.  NOT A MISTAKE
 if ! AZ group show --resource-group "${RG_NAME}" ; then
-    if ! AZ group create --resource-group "${RG_NAME}" --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" ; then
+    if ! AZ group create --resource-group "${RG_NAME}" \
+        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" ; then
         cat /tmp/az_stderr.$$; return 1
     fi
 fi

@@ -255,7 +255,7 @@ go
 EOF
 
 cat <<EOF | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
-IF OBJECT_ID(N'${DB_SCHEMA}.intpx', N'U') IS NOT NULL
+IF OBJECT_ID(N'${DB_SCHEMA}.intpk', N'U') IS NOT NULL
     insert into [${DB_SCHEMA}].[intpk] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
 go
 IF OBJECT_ID(N'${DB_SCHEMA}.dtix', N'U') IS NOT NULL

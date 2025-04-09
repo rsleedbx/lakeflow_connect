@@ -9,10 +9,15 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
-export GCLOUD_DB_TYPE=gs
-export GCLOUD_DB_SUFFIX=gs
 export glcoud_database_version_ct=${glcoud_database_version:-SQLSERVER_2022_EXPRESS}
 export glcoud_database_version_both=${glcoud_database_version:-SQLSERVER_2022_ENTERPRISE}
+if [[ "${CDC_CT_MODE}" =~ ^(CT)$ ]]; then 
+    export GCLOUD_DB_TYPE=gt
+    export GCLOUD_DB_SUFFIX=gt
+else
+    export GCLOUD_DB_TYPE=gc
+    export GCLOUD_DB_SUFFIX=gc
+fi
 
 DB_PORT=1433            # hardcoded by the cloud
 DBA_USERNAME=sqlserver  # hardcoded by the cloud
@@ -27,73 +32,10 @@ fi
 # #############################################################################
 # export functions
 
-password_reset_db() {
-    if ! GCLOUD sql instances patch "${DB_HOST}" --authorized-networks="${DB_FIREWALL_CIDRS_CSV}"; then
-        cat /tmp/gcloud_stderr.$$; return 1;
-    fi
-}
-export -f password_reset_db
 
-start_db() {
-    local skip_db_show="${1:-""}"
-
-    if [[ -z "$skip_db_show" ]] && ! AZ sql db show -n "$DB_CATALOG" -s "$DB_HOST" -g "${RG_NAME}"; then cat /tmp/GCLOUD_stderr.$$; return 1; fi
-    if [[ "Online" == "$(jq -r '.state' /tmp/GCLOUD_stdout.$$)" ]]; then CONNECT_TIMEOUT=10; else CONNECT_TIMEOUT=120; fi
-    if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG" "$CONNECT_TIMEOUT"; then
-        cat /tmp/GCLOUD_stderr.$$; return 1;
-    fi
-}
-export -f start_db
-
-stop_db() {
-    echo "stop db not required"
-}
-export -f stop_db
-
-delete_db() {
-    if ! AZ sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}"; then 
-        cat /tmp/GCLOUD_stderr.$$; return 1;
-    fi
-}
-export -f delete_db
-
-delete_catalog() {
-    if ! AZ sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then 
-        cat /tmp/GCLOUD_stderr.$$; return 1;
-    fi
-}
-export -f delete_catalog
-
-show_firewall() {
-    if ! AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"; then 
-        cat /tmp/GCLOUD_stderr.$$; return 1;
-    fi
-}
-export -f show_firewall
-
-firewall_rule_add() {
-for fw_rule in "${@}"; do
-    read -rd "\n" address host_min host_max <<< \
-        "$(ipcalc -bn "${fw_rule}" | awk -F'[:[:space:]]+' '/^HostMin|^HostMax|^Address/ {print $(NF-1)}')"
-    fw_rule_name="$(echo "${fw_rule}" | tr [./] _)"
-    if [[ -z $host_min || -z $host_max ]]; then
-        echo "${fw_rule} did not produce correct ${host_min} and/or ${host_max}.  Assuming /32"
-        host_min="$address"
-        host_max="$address"
-    fi
-    if ! AZ sql server firewall-rule show -n "${fw_rule_name}" -s "${DB_HOST}" -g "${RG_NAME}"; then
-        if ! AZ sql server firewall-rule create -n "${fw_rule_name}" -s "$DB_HOST" -g "${RG_NAME}" --start-ip-address ${host_min} --end-ip-address "${host_max}"; then
-            cat /tmp/GCLOUD_stderr.$$; return 1;
-        fi
-    fi
-done
-}
 # #############################################################################
 # load secrets if exists
 
-#echo -e "\nLoading previous secrets \n"
-
-#get_secrets
 
 # #############################################################################
 # set default host and catalog if not specified
@@ -107,15 +49,12 @@ if [[ -n "$DB_HOST" && "$DB_HOST" != *"-${GCLOUD_DB_SUFFIX}" ]]; then
 fi
 
 # get avail sql server if not specified
-if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
-    [[ -z "$GCLOUD_DB_TYPE" || "$GCLOUD_DB_TYPE" == "gs" ]]; then 
-
+if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]]; then
     if [[ "${CDC_CT_MODE}" =~ ^(CT)$ ]]; then 
         GCLOUD sql instances list --filter "(databaseInstalledVersion ~ ^.*EXPRESS OR databaseInstalledVersion ~ ^.*WEB) AND name ~ ^${WHOAMI}-.*"
     else
         GCLOUD sql instances list --filter "(databaseInstalledVersion ~ ^.*ENTERPRISE OR databaseInstalledVersion ~ ^.*STANDARD) AND name ~ ^${WHOAMI}-.*"
     fi
-
     read -rd "\n" x1 x2 <<< "$(jq -r 'first( .[]) | .name, (.ipAddresses.[] | select(.type=="PRIMARY") | .ipAddress)' /tmp/gcloud_stdout.$$)"
     if [[ -n $x1 && -n $x2 ]]; then DB_HOST="$x1"; DB_HOST_FQDN="$x2"; fi
 fi
@@ -156,9 +95,10 @@ if ! GCLOUD sql instances describe ${DB_HOST}; then
 
     if [[ "${CDC_CT_MODE}" =~ ^(CT)$  ]]; then 
         GCLOUD sql instances create ${DB_HOST} \
+        --tags "owner=${DBX_USERNAME}","${REMOVE_AFTER:+removeafter=${REMOVE_AFTER}}" \
         ${CLOUD_LOCATION:+"--zone=$CLOUD_LOCATION"} \
         --edition=enterprise \
-        --database-version=glcoud_database_version_ct \
+        --database-version=${glcoud_database_version_ct} \
         --cpu=1 \
         --memory=4GB \
         --zone=us-central1-a \
@@ -168,9 +108,10 @@ if ! GCLOUD sql instances describe ${DB_HOST}; then
     else
         if [[ ${glcoud_database_version_both} == "*STANDARD" ]]; then
             GCLOUD sql instances create ${DB_HOST} \
+            --tags "owner=${DBX_USERNAME}","${REMOVE_AFTER:+removeafter=${REMOVE_AFTER}}" \
             ${CLOUD_LOCATION:+"--zone=$CLOUD_LOCATION"} \
             --edition=enterprise \
-            --database-version=$glcoud_database_version_both \
+            --database-version=${glcoud_database_version_both} \
             --cpu=1 \
             --memory=4GB \
             --zone=us-central1-a \
@@ -180,8 +121,9 @@ if ! GCLOUD sql instances describe ${DB_HOST}; then
         else
             GCLOUD sql instances create ${DB_HOST} \
             ${CLOUD_LOCATION:+"--zone=$CLOUD_LOCATION"} \
+            --tags "owner=${DBX_USERNAME}","${REMOVE_AFTER:+removeafter=${REMOVE_AFTER}}" \
             --edition=enterprise \
-            --database-version=$glcoud_database_version_both \
+            --database-version=${glcoud_database_version_both} \
             --cpu=2 \
             --memory=8GB \
             --zone=us-central1-a \

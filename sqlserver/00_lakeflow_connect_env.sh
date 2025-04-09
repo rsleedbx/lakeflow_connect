@@ -78,6 +78,23 @@ AZ() {
     fi
 }
 
+# display AZ commands
+GCLOUD() {
+    PWMASK="$@"
+    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
+    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+    echo -n gcloud "${PWMASK}" --quiet --format=json
+    gcloud "$@" --quiet --format=json >/tmp/gcloud_stdout.$$ 2>/tmp/gcloud_stderr.$$
+    rc=$?
+    if [[ "$rc" != "0" ]]; then
+
+        echo ". failed with $rc"
+        return 1
+    else
+        echo ""
+    fi
+}
+
 DBX() {
 local rc
     PWMASK="$@"
@@ -95,16 +112,29 @@ local rc
     fi
 }
 
+SQLCMD() {
+    PWMASK="$@"
+    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
+    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+    echo -n sqlcmd "${PWMASK}"
+    if ! [ -t 0 ]; then
+        # echo "redirect stdin"
+        sqlcmd "$@" >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
+    else
+        sqlcmd "$@" >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
+    fi    
+    rc=$?
+    if [[ "$rc" != "0" ]]; then
+
+        echo ". failed with $rc"
+        return 1
+    else
+        echo ""
+    fi
+}   
+
 export WHOAMI=${WHOAMI:-$(whoami)}
 WHOAMI="$(echo "$WHOAMI" | tr -d '\-\.\_')"
-
-if ! AZ account show; then
-    cat /tmp/dbx_stderr.$$ /tmp/az_stderr.$$
-    return 1
-fi
-az_id="${az_id:-$(jq -r '.id' /tmp/az_stdout.$$)}" 
-az_tenantDefaultDomain="${az_tenantDefaultDomain:-$(jq -r '.tenantDefaultDomain' /tmp/az_stdout.$$)}"
-az_user_name="${az_user_name:-$(jq -r '.user.name' /tmp/az_stdout.$$)}"
 
 
 if [[ -z "$DBX_USERNAME" ]]; then
@@ -136,8 +166,6 @@ read_fqdn_dba_if_host(){
     fi
     if [[ -n $x1 && -n $x2 && -n $x3 ]]; then DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; fi
 }
-
-
 
 # return 1 variable
 set_mi_fqdn_dba_host() {
@@ -241,29 +269,3 @@ put_secrets() {
 export put_secrets
 
 # #############################################################################
-
-if [[ -n "${CLOUD_LOCATION}" ]]; then 
-    if ! AZ configure --defaults location="${CLOUD_LOCATION}" ; then
-        cat /tmp/az_stderr.$$; return 1
-    fi
-fi
-
-
-# #############################################################################
-# create resource group if not exists
-# https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/manage-resource-groups-cli
-
-# multiples tags are defined correctly below.  NOT A MISTAKE
-if ! AZ group show --resource-group "${RG_NAME}" ; then
-    if ! AZ group create --resource-group "${RG_NAME}" \
-        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" ; then
-        cat /tmp/az_stderr.$$; return 1
-    fi
-fi
-RG_NAME=$(jq -r .name /tmp/az_stdout.$$)
-if ! AZ configure --defaults group="${RG_NAME}"; then 
-    cat /tmp/az_stderr.$$; return 1
-fi
-
-echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
-

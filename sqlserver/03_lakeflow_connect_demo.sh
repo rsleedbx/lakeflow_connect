@@ -69,6 +69,7 @@ if ! DBX connections get "$CONNECTION_NAME"; then
     if ! DBX connections create --json '{
         "name": "'"$CONNECTION_NAME"'",
         "connection_type": "SQLSERVER",
+        "comment": "'"CDC_CT_MODE=${CDC_CT_MODE}"'",
         "options": {
         "host": "'"$DB_HOST_FQDN"'",
         "port": "'"$DB_PORT"'",
@@ -87,6 +88,7 @@ if ! DBX connections get "$CONNECTION_NAME"; then
 else
   # in case password is updated
   if ! DBX connections update "$CONNECTION_NAME" --json '{
+        "comment": "'"CDC_CT_MODE=${CDC_CT_MODE}"'",
         "options": {
         "host": "'"$DB_HOST_FQDN"'",
         "port": "'"$DB_PORT"'",

@@ -1,3 +1,5 @@
+databricks-sdk~=0.28.0
+apscheduler
 ipywidgets
 pymssql
 sqlalchemy

@@ -9,22 +9,47 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
-export AZ_DB_TYPE=zsql
+export AZ_DB_TYPE=sq
 export AZ_DB_SUFFIX=sq
-export SECRETS_SCOPE="${SECRETS_SCOPE:-""}"  # secret scope being used
 
-# reset to auto if SECRETS_SCOPE does not have right suffix
-if [[ "${RG_NAME}" == "lfcs-demo-rg" && "${SECRETS_SCOPE}" != "${RG_NAME}-${AZ_DB_TYPE}" ]]; then
-    SECRETS_SCOPE="${RG_NAME}-${AZ_DB_TYPE}"
-    CONNECTION_NAME="${SECRETS_SCOPE}"
-    echo -e "\nChanging the shared database\n"
-    echo -e "SECRETS_SCOPE=$SECRETS_SCOPE"
+# auto set the connection name
+if [[ "${WHOAMI}" == "lfcddemo" ]] && [[ -z "${CONNECTION_NAME}" || "${CONNECTION_NAME}" != *"-${AZ_DB_TYPE}" ]]; then
+    CONNECTION_NAME="${WHOAMI}-${AZ_DB_TYPE}"
+    echo -e "\nChanging the connection nam\n"
     echo -e "CONNECTION_NAME=$CONNECTION_NAME"
-elif [[ -n "$SECRETS_SCOPE" && "$SECRETS_SCOPE" != *"-${AZ_DB_TYPE}" ]]; then
-    SECRETS_SCOPE=""
-    echo -e "SECRETS_SCOPE=$SECRETS_SCOPE"
-
 fi
+
+# #############################################################################
+# AZ Cloud
+
+if ! AZ account show; then
+    cat /tmp/dbx_stderr.$$ /tmp/az_stderr.$$
+    return 1
+fi
+az_id="${az_id:-$(jq -r '.id' /tmp/az_stdout.$$)}" 
+az_tenantDefaultDomain="${az_tenantDefaultDomain:-$(jq -r '.tenantDefaultDomain' /tmp/az_stdout.$$)}"
+az_user_name="${az_user_name:-$(jq -r '.user.name' /tmp/az_stdout.$$)}"
+
+if [[ -n "${CLOUD_LOCATION}" ]]; then 
+    if ! AZ configure --defaults location="${CLOUD_LOCATION}" ; then
+        cat /tmp/az_stderr.$$; return 1
+    fi
+fi
+
+# multiples tags are defined correctly below.  NOT A MISTAKE
+if ! AZ group show --resource-group "${RG_NAME}" ; then
+    if ! AZ group create --resource-group "${RG_NAME}" \
+        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" ; then
+        cat /tmp/az_stderr.$$; return 1
+    fi
+fi
+RG_NAME=$(jq -r .name /tmp/az_stdout.$$)
+if ! AZ configure --defaults group="${RG_NAME}"; then 
+    cat /tmp/az_stderr.$$; return 1
+fi
+
+echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
+
 
 # #############################################################################
 # export functions
@@ -93,9 +118,9 @@ done
 # #############################################################################
 # load secrets if exists
 
-echo -e "\nLoading previous secrets \n"
+#echo -e "\nLoading previous secrets \n"
 
-get_secrets
+#get_secrets
 
 # #############################################################################
 # set default host and catalog if not specified
@@ -110,22 +135,31 @@ fi
 
 # get avail sql server if not specified
 if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
-    [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "zsql" ]] && \
+    [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "sq" ]] && \
     AZ sql server list -g "${RG_NAME}"; then
     
     read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/servers")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
     if [[ -n $x1 && -n $x2 && -n $x3 ]]; then DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; fi
 fi
 
-
 # get avail catalog if not specified
 if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]] && \
     AZ sql db list -s "$DB_HOST" -g "${RG_NAME}"; then
 
-    # first free catalog?
-    x1="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG and .useFreeLimit == true) | .name)' /tmp/az_stdout.$$)"
+    x1=""
+    # check if secrets exists for this host
+    if get_secrets $DB_HOST; then
+        # reuse catalog from the secret if exists?
+        x1="$(jq -r --arg DB_CATALOG $DB_CATALOG 'first(.[] | select(.name == $DB_CATALOG) | .name)' /tmp/az_stdout.$$)"
+    fi
+
+    # first free catalog exists?
+    if [[ -z $x1 ]]; then
+        x1="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG and .useFreeLimit == true) | .name)' /tmp/az_stdout.$$)"
+    fi
+
     if [[ -z $x1 ]]; then 
-        # first non free catalog?
+        # first non free catalog exits?
         x1="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG and .useFreeLimit == true) | .name)' /tmp/az_stdout.$$)"
     fi
     if [[ -n $x1 ]]; then DB_CATALOG="$x1"; fi
@@ -150,6 +184,7 @@ echo -e "\nCreate sql server if not exists\n"
 
 export DB_HOST_CREATED=""
 if ! AZ sql server show -n "${DB_HOST}" -g "${RG_NAME}"; then
+    # sql server create does not support tags
     if ! AZ sql server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --admin-user "${DBA_USERNAME}" \
         --admin-password "${DBA_PASSWORD}"; then
@@ -185,11 +220,17 @@ echo -e "\nCreate catalog if not exists\n"
 if ! AZ sql db show -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
 
     if ! AZ sql db create -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
+        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
         --compute-model Serverless --backup-storage-redundancy Local \
         --zone-redundant false --exhaustion-behavior AutoPause --use-free-limit \
          ; then 
 
+        # delete any leftover
+        cat /tmp/az_stderr.$$
+        AZ sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"
+
         if ! AZ sql db create -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
+            --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
             --compute-model Serverless --backup-storage-redundancy Local \
             --zone-redundant false --exhaustion-behavior AutoPause --auto-pause-delay 15 \
              ; then
@@ -248,7 +289,9 @@ start_db
 # #############################################################################
 # save the credentials to secrets store for reuse
 
-put_secrets
+if [[ -z "$DELETE_DB_AFTER_SLEEP" ]] && [[ "${DB_HOST_CREATED}" == "1" || "${DB_PASSWORD_CHANGED}" == "1" ]]; then
+    put_secrets
+fi
 
 # #############################################################################
 echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"

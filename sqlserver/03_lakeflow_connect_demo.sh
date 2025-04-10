@@ -69,6 +69,7 @@ if ! DBX connections get "$CONNECTION_NAME"; then
     if ! DBX connections create --json '{
         "name": "'"$CONNECTION_NAME"'",
         "connection_type": "SQLSERVER",
+        "comment": "'"CDC_CT_MODE=${CDC_CT_MODE}"'",
         "options": {
         "host": "'"$DB_HOST_FQDN"'",
         "port": "'"$DB_PORT"'",
@@ -87,6 +88,7 @@ if ! DBX connections get "$CONNECTION_NAME"; then
 else
   # in case password is updated
   if ! DBX connections update "$CONNECTION_NAME" --json '{
+        "comment": "'"CDC_CT_MODE=${CDC_CT_MODE}"'",
         "options": {
         "host": "'"$DB_HOST_FQDN"'",
         "port": "'"$DB_PORT"'",
@@ -159,6 +161,7 @@ echo "enabling replication on the intpk table"
 if ! DBX pipelines create --json '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
 "continuous": "true",
+"development": "true",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
   "objects": [
@@ -181,6 +184,7 @@ echo "enabling replication on the dtix table"
 if ! DBX pipelines create --json '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
 "continuous": "true",
+"development": "true",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
   "objects": [
@@ -302,5 +306,5 @@ echo -e "Target schema : ${DATABRICKS_HOST}/explore/data/${TARGET_CATALOG}/${TAR
 echo -e "Connection    : ${DATABRICKS_HOST}/explore/connections/${CONNECTION_NAME}"
 echo -e "Job           : ${DATABRICKS_HOST}/jobs/$INGESTION_JOB_ID \n"   
 
-if ! DBX pipelines list-pipelines --filter "name like 'robertlee_%'"; then cat /tmp/dbx_stderr.$$; return 1; fi
+if ! DBX pipelines list-pipelines --filter "name like '${WHOAMI}_%'"; then cat /tmp/dbx_stderr.$$; return 1; fi
 jq --arg url "$DATABRICKS_HOST" -r 'sort_by(.name) | .[] | [ .name, .pipeline_id, .state, ($url + "/pipelines/" + .pipeline_id) ] | @tsv' /tmp/dbx_stdout.$$ 

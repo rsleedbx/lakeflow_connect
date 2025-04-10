@@ -9,28 +9,46 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
-export AZ_DB_TYPE=zmi
+export AZ_DB_TYPE=mi
 export AZ_DB_SUFFIX=mi
-export SECRETS_SCOPE="${SECRETS_SCOPE:-""}"  # secret scope being used
 
 # reset to auto if SECRETS_SCOPE does not have right suffix
-if [[ "${RG_NAME}" == "lfcs-demo-rg" && "${SECRETS_SCOPE}" != "${RG_NAME}-${AZ_DB_TYPE}" ]]; then
-    SECRETS_SCOPE="${RG_NAME}-${AZ_DB_TYPE}"
-    CONNECTION_NAME="${SECRETS_SCOPE}"
-    echo -e "\n Changing the shared database\n"
-    echo -e "SECRETS_SCOPE=$SECRETS_SCOPE"
+if [[ "${WHOAMI}" == "lfcddemo" ]] && [[ -z "${CONNECTION_NAME}" || "${CONNECTION_NAME}" != *"-${AZ_DB_TYPE}" ]]; then
+    CONNECTION_NAME="${WHOAMI}-${AZ_DB_TYPE}"
+    echo -e "\nChanging the connection nam\n"
     echo -e "CONNECTION_NAME=$CONNECTION_NAME"
-elif [[ -n "$SECRETS_SCOPE" && "$SECRETS_SCOPE" != *"-${AZ_DB_TYPE}" ]]; then
-    SECRETS_SCOPE=""
-    echo -e "SECRETS_SCOPE=$SECRETS_SCOPE"
 fi
 
 # #############################################################################
-# load secrets if exists
+# AZ Cloud
 
-echo -e "\nLoading previous secrets \n"
+if ! AZ account show; then
+    cat /tmp/dbx_stderr.$$ /tmp/az_stderr.$$
+    return 1
+fi
+az_id="${az_id:-$(jq -r '.id' /tmp/az_stdout.$$)}" 
+az_tenantDefaultDomain="${az_tenantDefaultDomain:-$(jq -r '.tenantDefaultDomain' /tmp/az_stdout.$$)}"
+az_user_name="${az_user_name:-$(jq -r '.user.name' /tmp/az_stdout.$$)}"
 
-get_secrets
+if [[ -n "${CLOUD_LOCATION}" ]]; then 
+    if ! AZ configure --defaults location="${CLOUD_LOCATION}" ; then
+        cat /tmp/az_stderr.$$; return 1
+    fi
+fi
+
+# multiples tags are defined correctly below.  NOT A MISTAKE
+if ! AZ group show --resource-group "${RG_NAME}" ; then
+    if ! AZ group create --resource-group "${RG_NAME}" \
+        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" ; then
+        cat /tmp/az_stderr.$$; return 1
+    fi
+fi
+RG_NAME=$(jq -r .name /tmp/az_stdout.$$)
+if ! AZ configure --defaults group="${RG_NAME}"; then 
+    cat /tmp/az_stderr.$$; return 1
+fi
+
+echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
 
 # #############################################################################
 # check if sql server if exists
@@ -52,14 +70,24 @@ if [[ -z "$DB_HOST" || "$DB_HOST_FQDN" != "$DB_HOST.public."* ]] && \
         DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; 
         set_mi_fqdn_dba_host
     fi
+fi
 
-    if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]] && AZ sql midb list --mi "$DB_HOST" -g "${RG_NAME}"; then
+# get avail catalog if not specified
+if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]] && \
+    AZ sql midb list --mi "$DB_HOST" -g "${RG_NAME}"; then
+
+    x1=""
+    # check if secrets exists for this host
+    if get_secrets $DB_HOST; then
+        # reuse catalog from the secret if exists?
+        x1="$(jq -r --arg DB_CATALOG $DB_CATALOG 'first(.[] | select(.name == $DB_CATALOG) | .name)' /tmp/az_stdout.$$)"
+    fi
+
+    if [[ -z $x1 ]]; then
         echo "DB_CATALOG not set. checking az sql db list"
         x1="$(jq -r 'first(.[] | select(.name != "master") | .name)' /tmp/az_stdout.$$)"
-        if [[ -n $x1 ]]; then DB_CATALOG="$x1"; fi
-    else
-        DB_CATALOG="$CATALOG_BASENAME"
     fi
+    if [[ -n $x1 ]]; then DB_CATALOG="$x1"; fi
 fi
 
 NINE_CHAR_ID=$(date +%s | xargs printf "%08x\n") # number of seconds since epoch in hex
@@ -78,10 +106,6 @@ if [[ -z "${DBA_USERNAME}" || -z "${DB_CATALOG}" || -z "$DB_HOST" || "$DB_HOST" 
     DB_HOST="${DB_BASENAME}-${AZ_DB_SUFFIX}"; 
     DB_CATALOG="$CATALOG_BASENAME"
 fi  
-
-if [[ -n "$DB_HOST" ]]; then
-    echo "az sql mi: $DB_HOST $DBA_USERNAME@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG"
-fi
 
 DB_PORT=3342
 
@@ -164,11 +188,24 @@ if ! AZ sql mi show --name "${DB_HOST}"; then
     # freemium requires --storage 64
     echo -e "AZ sql mi ${DB_HOST}: trying --pricing-model Freemium \n"
 
-    if ! AZ sql mi create --admin-password $DBA_PASSWORD --admin-user $DBA_USERNAME --name $DB_HOST -g "${RG_NAME}" --subnet $subnet --vnet-name $vNet --location "$CLOUD_LOCATION"  -e GeneralPurpose -f Gen5 -c 4 --public-data-endpoint-enabled true --zone-redundant false --pricing-model Freemium --storage 64  --backup-storage-redundancy Local ; then
+    if ! AZ sql mi create --admin-password $DBA_PASSWORD --admin-user $DBA_USERNAME --name $DB_HOST -g "${RG_NAME}" \
+        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
+        --subnet $subnet --vnet-name $vNet --location "$CLOUD_LOCATION"  -e GeneralPurpose -f Gen5 -c 4 \
+        --public-data-endpoint-enabled true --zone-redundant false --pricing-model Freemium \
+        --storage 64  --backup-storage-redundancy Local ; then
 
+        # delete any leftover
+        cat /tmp/az_stderr.$$
+        AZ sql mi delete -y --name $DB_HOST -g "${RG_NAME}"
+
+        # try paid
         echo -e "AZ sql mi ${DB_HOST}: trying paid \n"
 
-        if ! AZ sql mi create --admin-password $DBA_PASSWORD --admin-user $DBA_USERNAME --name $DB_HOST -g "${RG_NAME}" --subnet $subnet --vnet-name $vNet --location "$CLOUD_LOCATION"  -e GeneralPurpose -f Gen5 -c 4 --public-data-endpoint-enabled true --zone-redundant false --storage 64 --backup-storage-redundancy Local ; then
+        if ! AZ sql mi create --admin-password $DBA_PASSWORD --admin-user $DBA_USERNAME --name $DB_HOST -g "${RG_NAME}" \
+        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
+        --subnet $subnet --vnet-name $vNet --location "$CLOUD_LOCATION"  -e GeneralPurpose -f Gen5 -c 4 \
+        --public-data-endpoint-enabled true --zone-redundant false \
+        --storage 64 --backup-storage-redundancy Local ; then
             cat /tmp/az_stderr.$$
             return 1
         fi
@@ -207,7 +244,9 @@ echo "AZ sql mi ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}
 echo -e "\nCreating catalog if not exists\n" 
 
 if ! AZ sql midb show -n "${DB_CATALOG}" --mi "${DB_HOST}" -g "${RG_NAME}"; then 
-    if ! AZ sql midb create -n "${DB_CATALOG}" --mi "${DB_HOST}" -g "${RG_NAME}" --collation Latin1_General_100_CS_AS_SC; then
+    if ! AZ sql midb create -n "${DB_CATALOG}" --mi "${DB_HOST}" -g "${RG_NAME}" \
+        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
+        --collation Latin1_General_100_CS_AS_SC; then
         cat /tmp/az_stderr.$$
         return 1
     fi
@@ -267,7 +306,9 @@ fi
 # #############################################################################
 # save the credentials to secrets store for reuse
 
-put_secrets
+if [[ -z "$DELETE_DB_AFTER_SLEEP" ]] && [[ "${DB_HOST_CREATED}" == "1" || "${DB_PASSWORD_CHANGED}" == "1" ]]; then
+    put_secrets
+fi
 
 # #############################################################################
 echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"

@@ -132,7 +132,10 @@ esac
 
 case "${CDC_CT_MODE}" in 
 "BOTH"|"CDC") 
+# NOCOUNT is required to fix Invalid cursor state, SQL state 24000 in SQLExecDirect
 cat <<EOF | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
+SET NOCOUNT ON
+go
 if exists (select name, is_cdc_enabled from sys.databases where name=db_name() and is_cdc_enabled=1)
     BEGIN
         select 'CDC already enabled'
@@ -193,7 +196,11 @@ EOF
 
 echo -e "SET NOCOUNT ON\ngo\n select name, is_cdc_enabled from sys.databases where name=db_name() and is_cdc_enabled=0" | sqlcmd -S $DB_HOST_FQDN,${DB_PORT} -U "$DBA_USERNAME" -P "$DBA_PASSWORD" -d "$DB_CATALOG" -C -l 60 -h -1  >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
 if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "cdc db disabled ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
+else 
+    echo -e "\n\nERROR: CDC COULD NOT BE ENABLED. CHANGING TO CT ONLY MODE\n\n"
+    CDC_CT_MODE=CT
+    cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
+fi
 ;;
 
 esac
@@ -255,7 +262,7 @@ go
 EOF
 
 cat <<EOF | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
-IF OBJECT_ID(N'${DB_SCHEMA}.intpx', N'U') IS NOT NULL
+IF OBJECT_ID(N'${DB_SCHEMA}.intpk', N'U') IS NOT NULL
     insert into [${DB_SCHEMA}].[intpk] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
 go
 IF OBJECT_ID(N'${DB_SCHEMA}.dtix', N'U') IS NOT NULL

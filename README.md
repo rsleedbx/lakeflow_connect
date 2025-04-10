@@ -1,10 +1,8 @@
-A simple end to end Databricks Lakeflow Connect SQL Server demo.
+This is a simple end to end Databricks Lakeflow Connect SQL Server demo.
 
-A [Azure SQL Free](https://devblogs.microsoft.com/azure-sql/new-azure-sql-database-free-offer/) and [Azure SQL Managed Instance Free](https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/free-offer?view=azuresql) are tried first.
-If not available, paid versions will be setup with minimal capacity.
-Adjust to bigger capacity for a performance tests.=
+The database, firewall, connection, and pipelines are created and automatically deleted after an hour. A tiny database instance is create meant for a functional demo. 
 
-# Run a demo
+# Steps to run a demo
 
 - [CLI Install (one time)](README.installcli.md)
 - Open a new terminal
@@ -14,10 +12,10 @@ Adjust to bigger capacity for a performance tests.=
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/00_lakeflow_connect_env.sh)
     ```
 
-- Start Azure SQL Server **or** Managed Instance 
+- Start one of the below database instance 
 
     <details>
-    <summary>Azure SQL SQL Server</summary>
+    <summary>Azure SQL Server</summary>
 
     ```bash
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/01_azure_sqlserver.sh)
@@ -26,10 +24,19 @@ Adjust to bigger capacity for a performance tests.=
     </details>
 
     <details>
-    <summary>Azure SQL Managed Instance</summary>
+    <summary>Azure SQL Server Managed Instance</summary>
 
     ```bash
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/01_azure_managed_instance.sh)
+    ```
+
+    </details>  
+
+    <details>
+    <summary>Google CloudSQL SQL Server</summary>
+
+    ```bash
+    source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/01_gcloud_sqlserver_instance.sh)
     ```
 
     </details>  
@@ -40,9 +47,10 @@ Adjust to bigger capacity for a performance tests.=
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/02_sqlserver_configure.sh)
     ```
 
--  Start the Databricks Lakeflow Connect
+-  Start the Databricks Lakeflow Connect Database Demo
 
     ```bash
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/03_lakeflow_connect_demo.sh)
     ```
+- Don't reboot the laptop while the demo is running.  Rebooting the laptop will kill the background cleanup jobs.
 

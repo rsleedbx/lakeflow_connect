@@ -155,19 +155,21 @@ echo -e "gcloud sql ${DB_HOST}: https://console.cloud.google.com/sql/instances/$
 
 # #############################################################################
 
-# Run firewall rules before coming here
-
 echo -e "Creating permissive firewall rules if not exists\n"
 
 # convert CIDR to range 
 
-if (( "$(jq '.settings.ipConfiguration.authorizedNetworks | length' /tmp/gcloud_stdout.$$)" == 0 )); then 
+firewall_set() {
     printf -v DB_FIREWALL_CIDRS_CSV '%s,' "${DB_FIREWALL_CIDRS[@]}"
     DB_FIREWALL_CIDRS_CSV="${DB_FIREWALL_CIDRS_CSV%,}"  # remove trailing ,
     if ! GCLOUD sql instances patch "${DB_HOST}" --authorized-networks="${DB_FIREWALL_CIDRS_CSV}"; then
         cat /tmp/gcloud_stderr.$$
         return 1
     fi
+}
+
+if (( "$(jq '.settings.ipConfiguration.authorizedNetworks | length' /tmp/gcloud_stdout.$$)" == 0 )); then 
+    if ! firewall_set; then return 1; fi
 fi
 
 echo "gcloud connections ${DB_HOST}: https://console.cloud.google.com/sql/instances/${DB_HOST}/connections/summary"

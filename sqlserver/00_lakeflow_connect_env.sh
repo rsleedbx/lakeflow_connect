@@ -102,7 +102,7 @@ local rc
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
     PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
     echo -n databricks "${PWMASK}"
-    databricks "$@" >/tmp/dbx_stdout.$$ 2>/tmp/dbx_stderr.$$
+    databricks "$@" --output json>/tmp/dbx_stdout.$$ 2>/tmp/dbx_stderr.$$
     rc=$?
     if [[ "$rc" != "0" ]]; then
         echo " failed with $rc"

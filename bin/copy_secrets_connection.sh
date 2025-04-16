@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# error out when undeclared variable is used
+set -u 
+
 # grant can be done the following way
 # databricks api patch /api/2.1/unity-catalog/permissions/connection/lfcddemo-mi --json "$connection_permission" 
 # databricks grants update connection lfcddemo-mi --json "$connection_permission"

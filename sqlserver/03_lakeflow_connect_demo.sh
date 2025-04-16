@@ -68,12 +68,12 @@ echo -e "\nCreate Connection \n"
 if ! DBX connections get "$CONNECTION_NAME"; then
     if ! DBX connections create --json '{
         "name": "'"$CONNECTION_NAME"'",
-        "connection_type": "SQLSERVER",
+        "connection_type": "'"$CONNECTION_TYPE"'",
         "comment": "'"CDC_CT_MODE=${CDC_CT_MODE}"'",
         "options": {
         "host": "'"$DB_HOST_FQDN"'",
         "port": "'"$DB_PORT"'",
-        "trustServerCertificate": "true",
+        '$(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]] ; then echo "\"trustServerCertificate\": \"true\",";fi)'
         "user": "'"$USER_USERNAME"'",
         "password": "'"${USER_PASSWORD}"'"
         }
@@ -92,7 +92,7 @@ else
         "options": {
         "host": "'"$DB_HOST_FQDN"'",
         "port": "'"$DB_PORT"'",
-        "trustServerCertificate": "true",
+        '$(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]] ; then echo "\"trustServerCertificate\": \"true\",";fi)'
         "user": "'"$USER_USERNAME"'",
         "password": "'"${USER_PASSWORD}"'"
         }
@@ -142,6 +142,7 @@ if ! DBX pipelines create --json '{
 "continuous": "true",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
+  "source_type": "'"$SOURCE_TYPE"'",
   "objects": [
      {"schema": {
         "source_catalog": "'"$DB_CATALOG"'",

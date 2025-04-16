@@ -11,6 +11,8 @@ fi
 
 export AZ_DB_TYPE=sq
 export AZ_DB_SUFFIX=sq
+export CONNECTION_TYPE=SQLSERVER
+export SOURCE_TYPE=$CONNECTION_TYPE
 
 # auto set the connection name
 if [[ "${WHOAMI}" == "lfcddemo" ]] && [[ -z "${CONNECTION_NAME}" || "${CONNECTION_NAME}" != *"-${AZ_DB_TYPE}" ]]; then

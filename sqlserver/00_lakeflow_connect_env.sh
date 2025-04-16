@@ -133,6 +133,26 @@ SQLCMD() {
     fi
 }   
 
+PSQL() {
+    PWMASK="$@"
+    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
+    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+    echo -n psql "${PWMASK}"
+    if ! [ -t 0 ]; then
+        # echo "redirect stdin"
+        psql "$@" >/tmp/psql_stdout.$$ 2>/tmp/psql_stderr.$$
+    else
+        psql "$@" >/tmp/psql_stdout.$$ 2>/tmp/psql_stderr.$$
+    fi    
+    rc=$?
+    if [[ "$rc" != "0" ]]; then
+
+        echo ". failed with $rc"
+        return 1
+    else
+        echo ""
+    fi
+}  
 export WHOAMI=${WHOAMI:-$(whoami)}
 WHOAMI="$(echo "$WHOAMI" | tr -d '\-\.\_')"
 
@@ -177,7 +197,7 @@ export DBA_USERNAME=${DBA_USERNAME:-$(pwgen -1AB 16)}        # GCP hardcoded to 
 export USER_USERNAME=${USER_USERNAME:-$(pwgen -1AB 16)}      # set if not defined
 
 # DB and catalog basename
-export DB_BASENAME=${DB_BASENAME:-$(pwgen -1AB 8)}        # lower case, name seen on internet
+export DB_BASENAME=${DB_BASENAME:-$(pwgen -1AB 16)}        # lower case, name seen on internet
 export CATALOG_BASENAME=${CATALOG_BASENAME:-$(pwgen -1AB 8)}
 
 # special char mess up eval and bash string substitution
@@ -185,7 +205,7 @@ export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \[\]\!\=\~\^\$\;\(\)\:\.\*
 export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \[\]\!\=\~\^\$\;\(\)\:\.\*\@\\\>\`\"\'\| 32 )}"  # set if not defined
 
 export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}}
-export DB_PORT=${DB_PORT:-1433}
+export DB_PORT=${DB_PORT:-""}
 export SECRETS_SCOPE=${SECRETS_SCOPE:-${WHOAMI}}
 
 # functions used 

@@ -11,6 +11,8 @@ fi
 
 export AZ_DB_TYPE=mi
 export AZ_DB_SUFFIX=mi
+export CONNECTION_TYPE=SQLSERVER
+export SOURCE_TYPE=$CONNECTION_TYPE
 
 # reset to auto if SECRETS_SCOPE does not have right suffix
 if [[ "${WHOAMI}" == "lfcddemo" ]] && [[ -z "${CONNECTION_NAME}" || "${CONNECTION_NAME}" != *"-${AZ_DB_TYPE}" ]]; then

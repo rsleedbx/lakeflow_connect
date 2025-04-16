@@ -9,27 +9,6 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   return 1
 fi
 
-SQLCMD() {
-    PWMASK="$@"
-    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
-    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
-    echo -n sqlcmd "${PWMASK}"
-    if ! [ -t 0 ]; then
-        # echo "redirect stdin"
-        sqlcmd "$@" >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
-    else
-        sqlcmd "$@" >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
-    fi    
-    rc=$?
-    if [[ "$rc" != "0" ]]; then
-
-        echo ". failed with $rc"
-        return 1
-    else
-        echo ""
-    fi
-}    
-
 # #############################################################################
 
 # connect to master catalog
@@ -45,7 +24,6 @@ CREATE LOGIN ${USER_USERNAME} WITH PASSWORD = '${USER_PASSWORD}'
 go
 alter login ${USER_USERNAME} with password = '${USER_PASSWORD}'
 go
--- gcp does not allow user login
 CREATE USER ${USER_USERNAME} FOR LOGIN ${USER_USERNAME} WITH DEFAULT_SCHEMA=dbo
 go
 EOF

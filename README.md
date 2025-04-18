@@ -6,6 +6,34 @@ The database, firewall, connection, and pipelines are created and automatically 
 
 - [CLI Install (one time)](README.installcli.md)
 - Open a new terminal
+
+    <details>
+    <summary>OSX terminal</summary>
+
+    - press Command Space
+    - type `terminal`
+    - click `terminal` icon ![](./resources/terminal.png)    
+    </details>
+
+    <details>
+    <summary>iterm2 from brew install</summary>
+
+    - press Command Space
+    - type `iterm`
+    - click `iterm` icon ![](./resources/iterm.png)    
+    </details>
+
+    <details>
+    <summary>ttyd - from brew install for terminal in a browser experience</summary>
+
+    - open terminal or brew from the above
+    - run ttyd
+    ```bash
+    ttyd --writable bash
+    ```
+    - open a new tab from a browser with URL http://localhost:7681/ ![](./resources/ttyd.png)
+    </details>
+
 - Initialize environment variables
 
     ```bash

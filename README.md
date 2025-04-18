@@ -2,6 +2,8 @@ This is a simple end to end Databricks Lakeflow Connect SQL Server demo.
 
 The database, firewall, connection, and pipelines are created and automatically deleted after an hour. A tiny database instance is create meant for a functional demo. 
 
+Copy and paste the commands in a terminal windows.
+
 # Steps to run a demo
 
 - [CLI Install (one time)](README.installcli.md)
@@ -10,7 +12,7 @@ The database, firewall, connection, and pipelines are created and automatically 
     <details>
     <summary>OSX terminal</summary>
 
-    - press Command Space
+    - press Command Space and open Spotlight Search
     - type `terminal`
     - click `terminal` icon ![](./resources/terminal.png)    
     </details>
@@ -18,7 +20,7 @@ The database, firewall, connection, and pipelines are created and automatically 
     <details>
     <summary>iterm2 from brew install</summary>
 
-    - press Command Space
+    - press Command Space and open Spotlight Search
     - type `iterm`
     - click `iterm` icon ![](./resources/iterm.png)    
     </details>
@@ -26,7 +28,7 @@ The database, firewall, connection, and pipelines are created and automatically 
     <details>
     <summary>ttyd - from brew install for terminal in a browser experience</summary>
 
-    - open terminal or brew from the above
+    - open `terminal` or `iterm` from the above
     - run ttyd
     ```bash
     ttyd --writable bash
@@ -35,12 +37,12 @@ The database, firewall, connection, and pipelines are created and automatically 
     </details>
 
 - Initialize environment variables
-
+  
     ```bash
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/00_lakeflow_connect_env.sh)
     ```
 
-- Start one of the below database instances 
+- Start and configreu one of the below database instances
 
     <details>
     <summary>SQL Server</summary>

@@ -12,68 +12,62 @@ fi
 # #############################################################################
 
 # connect to master catalog
-if ! test_db_connect "$DBA_USERNAME" "$DBA_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "postgres"; then
-    cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
-fi    
-
-cat <<EOF | SQLCLI "${DBA_USERNAME}" "${DBA_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} "postgres" >/dev/null 2>&1
-ALTER ROLE $DBA_USERNAME WITH REPLICATION;
-EOF
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" test_db_connect
 
 # #############################################################################
-# create user login
+# create user login.  user by default = role + login
 
-cat <<EOF | SQLCLI "${DBA_USERNAME}" "${DBA_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} "postgres" >/dev/null 2>&1
-CREATE USER ${USER_USERNAME} PASSWORD '${USER_PASSWORD}';
-GRANT CONNECT ON DATABASE ${DB_CATALOG} TO ${USER_USERNAME};
-GRANT ALL PRIVILEGES ON DATABASE ${DB_CATALOG} TO ${USER_USERNAME};
+if [[ "$USER_USERNAME" == "$USER_BASENAME" ]]; then
+DB_CATALOG="postgres" SQLCLI_DBA -c "select usename from pg_user where usename not in ('azuresu', 'replication')" </dev/null
+if grep -q -v -m 1 "^${DBA_USERNAME}$" /tmp/psql_stdout.$$; then 
+    USER_USERNAME=$(grep -v -m 1 "^${DBA_USERNAME}$"); fi
+fi
+
+DB_CATALOG="postgres" SQLCLI_DBA <<EOF
+do \$\$ begin
+if not exists (select * from pg_user where usename = '${USER_USERNAME}') THEN
+    create user ${USER_USERNAME} password '${USER_PASSWORD}';
+end if;
+end \$\$;
+alter user ${USER_USERNAME} with password '${USER_PASSWORD}';
+grant connect on database ${DB_CATALOG} to ${USER_USERNAME};
+grant all privileges on database ${DB_CATALOG} to ${USER_USERNAME};
+alter role $USER_USERNAME with replication;
+select 1;
 EOF
 
 # connect to postgres as a user
-if ! test_db_connect "${USER_USERNAME}" "${USER_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} postgres; then
-    cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
-fi   
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PASSWORD" DB_CATALOG="postgres" test_db_connect
 
 # #############################################################################
 # create user in the catalog
 
-cat <<EOF | SQLCLI "${DBA_USERNAME}" "${DBA_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} ${DB_CATALOG}  >/dev/null 2>&1
-create schema $USER_USERNAME;
-GRANT USAGE ON SCHEMA "$DB_SCHEMA" TO $USER_USERNAME;
-GRANT ALL ON SCHEMA "$DB_SCHEMA" TO $USER_USERNAME;
-ALTER ROLE $USER_USERNAME WITH REPLICATION;
-EOF
-
 # connect to $DB_CATALOG as a user
-if ! test_db_connect "$USER_USERNAME" "$USER_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG"; then
-    cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
-fi   
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PASSWORD" DB_CATALOG="$DB_CATALOG" test_db_connect
 
 # #############################################################################
 
 # database enable / disable logical replica
 
-cat <<EOF | SQLCLI "${DBA_USERNAME}" "${DBA_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} "postgres" >/dev/null 2>&1
-SHOW wal_level
-EOF
+DB_CATALOG="postgres" SQLCLI_DBA -c "SHOW wal_level" </dev/null
 
 if [[ "logical" == $(cat /tmp/psql_stdout.$$) ]]; then echo "logical replica enable ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
 
+# remove left over slot names
+db_replication_cleanup() {
+    local GATEWAY_PIPELINE_ID=${1:-$GATEWAY_PIPELINE_ID}
 
-cat << EOF | SQLCLI "${DBA_USERNAME}" "${DBA_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} ${DB_CATALOG}
-SELECT 'init' FROM pg_create_logical_replication_slot('arcion_test', 'wal2json');
-EOF
-
-cat << EOF | SQLCLI "${DBA_USERNAME}" "${DBA_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} "postgres" 
-select slot_name,plugin,slot_type,datoid,database,temporary,active,active_pid FROM pg_replication_slots where database='${DB_CATALOG}'
-EOF
-
-if [[ -s /tmp/psql_stdout.$$ ]]; then echo "wal2json db enabled ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else
-    echo "wal2json db enabled not ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"
-    cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; 
-fi
+    DB_CATALOG="postgres" SQLCLI_DBA -c "select slot_name FROM pg_replication_slots where slot_name like 'dbx_%_$GATEWAY_PIPELINE_ID'" </dev/null
+    read -rd "\n" -a slot_names <<< "$(cat /tmp/psql_stdout.$$)"
+    if [[ -n "${slot_names[*]}" ]]; then
+        echo "slot name cleanup"
+        for slot_name in "${slot_names[@]}"; do
+            DB_CATALOG="postgres" SQLCLI_DBA -c "select pg_drop_replication_slot('$slot_name');" 
+        done
+    fi
+}
+export -f db_replication_cleanup
 
 # #############################################################################
 
@@ -84,11 +78,14 @@ fi
 
 # create schema
 
-echo "create schema ${DB_SCHEMA}" | SQLCLI "${USER_USERNAME}" "${USER_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} ${DB_CATALOG} 
+DB_CATALOG="$DB_CATALOG" SQLCLI -c "create schema if not exists ${DB_SCHEMA}" </dev/null
 # /tmp/psql_stdout.$$ will be 0 if schema was created.  drop the schema when done
 if [[ ! -s /tmp/psql_stderr.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_DB_AFTER_SLEEP}" && SQLCLI "${USER_USERNAME}" "${USER_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} ${DB_CATALOG} \
-    -c "drop table ${DB_SCHEMA}.intpk; drop table ${DB_SCHEMA}.dtix; drop schema ${DB_SCHEMA};" >> ~/nohup.out 2>&1 &
+    nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DB_STDOUT=~/nohup.out DB_STDERR=~/nohup.out DB_CATALOG="$DB_CATALOG" SQLCLI >>~/nohup.out 2>&1 << EOF &
+    drop table if exists ${DB_SCHEMA}.intpk; 
+    drop table if exists ${DB_SCHEMA}.dtix; 
+    drop schema if exists ${DB_SCHEMA};
+EOF
     echo -e "\nDeleting ${DB_SCHEMA} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n" 
 fi
 
@@ -96,40 +93,42 @@ fi
 
 # create tables
 
-cat <<EOF | SQLCLI "${USER_USERNAME}" "${USER_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} ${DB_CATALOG}  >/dev/null 2>&1
-create table ${DB_SCHEMA}.intpk (pk serial primary key, dt timestamp);
-create table ${DB_SCHEMA}.dtix (dt timestamp);
+DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
+    create table if not exists ${DB_SCHEMA}.intpk (pk serial primary key, dt timestamp);
+    create table if not exists ${DB_SCHEMA}.dtix (dt timestamp);
+    insert into ${DB_SCHEMA}.intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
+    insert into ${DB_SCHEMA}.dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
+    select '${DB_SCHEMA}.intpk',max(pk) from ${DB_SCHEMA}.intpk;
+    select '${DB_SCHEMA}.dtix',dt from ${DB_SCHEMA}.dtix limit 1;    
 EOF
 
-cat <<EOF | SQLCLI "${USER_USERNAME}" "${USER_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} ${DB_CATALOG}  >/dev/null 2>&1
-insert into ${DB_SCHEMA}.intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
-insert into ${DB_SCHEMA}.dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
-EOF
-
-echo -e "select max(pk) from ${DB_SCHEMA}.intpk" | SQLCLI "${USER_USERNAME}" "${USER_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} ${DB_CATALOG}  >/dev/null 2>&1
-if [[ -s /tmp/psql_stdout.$$ ]]; then echo "table intpk ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
+# .\+ = one or more so that nulls are not accepted
+if grep "^${DB_SCHEMA}.intpk,.\+$" /tmp/psql_stdout.$$; then echo "table intpk ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
 
-echo -e "select dt from ${DB_SCHEMA}.dtix limit 1" | SQLCLI "${USER_USERNAME}" "${USER_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} ${DB_CATALOG} >/dev/null 2>&1
-if [[ -s /tmp/psql_stdout.$$ ]]; then echo "table dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
+# .\+ = one or more so that nulls are not accepted
+if grep "^${DB_SCHEMA}.dtix,.\+$" /tmp/psql_stdout.$$ ; then echo "table dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
 
 # #############################################################################
 
 # enable replication tables
 
-cat <<EOF | SQLCLI "${USER_USERNAME}" "${USER_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} ${DB_CATALOG}  >/dev/null 2>&1
-ALTER TABLE ${DB_SCHEMA}.dtix REPLICA IDENTITY FULL;
-EOF
-
 # get the table replication status
-cat <<EOF | SQLCLI "${USER_USERNAME}" "${USER_PASSWORD}" ${DB_HOST_FQDN} ${DB_PORT} ${DB_CATALOG}  >/dev/null 2>&1
-SELECT nspname, relname, relreplident
-FROM pg_class as c JOIN pg_namespace AS ns ON c.relnamespace = ns.oid 
-WHERE nspname in ('$DB_SCHEMA') AND relname in ('dtix','intpk')
+DB_STDOUT="/tmp/psql_stdout_replication_table.$$" DB_STDERR="/tmp/psql_stderr_replication_table.$$"  SQLCLI <<EOF
+    SELECT nspname, relname, relreplident
+    FROM pg_class as c JOIN pg_namespace AS ns ON c.relnamespace = ns.oid 
+    WHERE nspname in ('$DB_SCHEMA') AND relname in ('dtix','intpk')
 EOF
 
-if [[ -n $(cat /tmp/psql_stdout.$$ | grep "robertlee,dtix,f") ]]; then echo "table full replica enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
-if [[ -n $(cat /tmp/psql_stdout.$$ | grep "robertlee,intpk,d" ) ]]; then echo "table default replica enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
+if [[ -n $(cat /tmp/psql_stdout_replication_table.$$ | grep "${DB_SCHEMA},dtix,f") ]]; 
+    then echo "table full replica enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
+else 
+    SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.dtix replica identity full;"
+fi
+
+if [[ -n $(cat /tmp/psql_stdout_replication_table.$$ | grep "${DB_SCHEMA},intpk,d" ) ]]; then 
+    echo "table default replica enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
+else 
+    SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.intpk replica identity default;"
+fi

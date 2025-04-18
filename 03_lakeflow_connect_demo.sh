@@ -124,7 +124,8 @@ GATEWAY_PIPELINE_ID="$(jq -r '.pipeline_id' /tmp/dbx_stdout.$$)"
 export GATEWAY_PIPELINE_ID
 
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$GATEWAY_PIPELINE_ID" >> ~/nohup.out 2>&1 &
+    nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$GATEWAY_PIPELINE_ID">> ~/nohup.out 2>&1 &
+    nohup sleep "${STOP_AFTER_SLEEP}" && db_replication_cleanup "$GATEWAY_PIPELINE_ID">> ~/nohup.out 2>&1 &
 fi
 if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
     nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$GATEWAY_PIPELINE_ID"  >> ~/nohup.out 2>&1 &
@@ -272,7 +273,8 @@ if ! DBX permissions update jobs      "$INGESTION_JOB_ID"      --json "$jobs_pip
 
 echo -e "\n Start workload \n"
 
-cat <<EOF | sqlcmd -d "${DB_CATALOG}" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -e >/dev/null 2>&1 &
+if ! declare -p sql_dml_generator &> /dev/null; then
+sql_dml_generator="
 while ( 1 = 1 )
 begin
 IF OBJECT_ID(N'${DB_SCHEMA}.intpk', N'U') IS NOT NULL
@@ -286,7 +288,11 @@ IF OBJECT_ID(N'${DB_SCHEMA}.dtix', N'U') IS NOT NULL
 WAITFOR DELAY '00:00:01'
 end
 go
-EOF
+"
+    nohup sqlcmd -d "${DB_CATALOG}" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -e >/dev/null 2>&1 <<< $(echo "$sql_dml_generator") &
+else
+    SQLCLI >/dev/null 2>&1 <<< $(echo "$sql_dml_generator") &
+fi
 
 LOAD_GENERATOR_PID=$!
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 

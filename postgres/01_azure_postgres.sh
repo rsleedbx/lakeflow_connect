@@ -57,41 +57,73 @@ echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDoma
 # export functions
 
 SQLCLI() {
-    local dba_username=$1
-    local dba_password=$2
-    local db_host_fqdn=$3
-    local db_port=$4
-    local db_catalog=$5
-    local timeout=${6:-5}
-    local sslmode=${7:-${DB_SSLMODE:-allow}}
+    local DB_USERNAME=${DB_USERNAME:-${USER_USERNAME}}
+    local DB_PASSWORD=${DB_PASSWORD:-${USER_PASSWORD}}
+    local DB_HOST_FQDN=${DB_HOST_FQDN}
+    local DB_PORT=${DB_PORT:-${1433}}
+    local DB_CATALOG=${DB_CATALOG:-"postgres"}
+    local DB_LOGIN_TIMEOUT=${DB_LOGIN_TIMEOUT:-10}
+    local DB_SSLMODE=${DB_SSLMODE:-"allow"}
+    local DB_URL=${DB_URL:-""}
+    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/psql_stdout.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/psql_stderr.$$"}
 
-    PWMASK="$@"
+    PWMASK="${*}"
     PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
     PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
-    echo psql "${PWMASK}"    
+    PWMASK="${PWMASK//$DBA_USERNAME/\$DBA_USERNAME}"
+    PWMASK="${PWMASK//$USER_USERNAME/\$USER_USERNAME}"
+    PWMASK="${PWMASK//$DB_CATALOG/\$DB_CATALOG}"
 
-    export PGPASSWORD=$dba_password
-    export PGCONNECT_TIMEOUT=$timeout
-    psql -q --csv --tuples-only postgresql://${dba_username}@${db_host_fqdn}:${db_port}/${db_catalog}?sslmode=${sslmode} >/tmp/psql_stdout.$$ 2>/tmp/psql_stderr.$$ 
-    return $?
+    echo psql "${DB_USERNAME}:/${DB_CATALOG}" "${PWMASK}" 
+
+    export PGPASSWORD=$DB_PASSWORD
+    export PGCONNECT_TIMEOUT=$DB_LOGIN_TIMEOUT
+    if [[ -t 0 ]]; then
+        # stdin is attached
+        psql "postgresql://${DB_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/${DB_CATALOG}?sslmode=${DB_SSLMODE}" "${@}" 
+    else
+        # running in batch mode
+        psql "postgresql://${DB_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/${DB_CATALOG}?sslmode=${DB_SSLMODE}" -q --csv --tuples-only "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
+    fi
+    RC=$?
+    if [[ "$RC" != "0" && "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
+        cat "${DB_STDOUT}" "${DB_STDERR}"
+        return $RC
+    elif [[ "$RC" != "0" && "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
+        cat "${DB_STDOUT}" "${DB_STDERR}"
+        kill -INT $$
+    elif [[ "$RC" == "0" && "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" ]]; then 
+        if [[ ! -s "${DB_STDOUT}" ]]; then 
+            return 1
+        else
+            return 0
+        fi
+    else
+        return $RC
+    fi
 }
+export -f SQLCLI
+
+SQLCLI_DBA() {
+    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" SQLCLI "${@}"
+}
+export -f SQLCLI_DBA
+
+SQLCLI_USER() {
+    DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" SQLCLI "${@}"
+}
+export -f SQLCLI_USER
 
 test_db_connect() {
-    local dba_username=$1
-    local dba_password=$2
-    local db_host_fqdn=$3
-    local db_port=$4
-    local db_catalog=$5
-    local timeout=${6:-5}
-    
-    echo "select 1" | SQLCLI "$@" >/dev/null 2>&1
-    if [[ $? == 0 ]]; then 
-        echo "connect ok $dba_username@$db_host_fqdn:${db_port}/${db_catalog}"
-    else 
-        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$ 
-        return 1 
+    SQLCLI "$@" -c "select 1" </dev/null
+    RC=$?
+    if [[ $RC == 0 ]]; then 
+        echo "connect ok $DB_USERNAME@$DB_HOST_FQDN:${DB_PORT}/${DB_CATALOG}"
     fi
+    return $RC
 }
 
 password_reset_db() {
@@ -126,12 +158,56 @@ for fw_rule in "${@}"; do
     fi
 done
 }
-# #############################################################################
-# load secrets if exists
 
-#echo -e "\nLoading previous secrets \n"
-
-#get_secrets
+# make sure to quote echo "$sql_dml_generator" otherwise the newline will be removed 
+export sql_dml_generator='
+set search_path='${DB_SCHEMA}';
+do $$
+declare 
+    counter integer := 0;
+begin
+    while counter >= 0 loop
+        -- intpk
+        insert into intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
+        commit;
+        delete from intpk where pk=(select min(pk) from intpk);
+        commit;
+        update intpk set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from intpk);
+        commit;
+        -- dtix
+        insert into dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
+        commit;
+        -- wait
+		raise notice '"'Counter %'"', counter;
+	    counter := counter + 1;
+        perform pg_sleep(1);
+    end loop;
+end;
+$$;
+'
+# will below fail?
+export sql_dml_generator_does_not_work_with_gateway='
+set search_path='${DB_SCHEMA}';
+do $$
+declare 
+    counter integer := 0;
+begin
+    while counter >= 0 loop
+        -- intpk
+        insert into intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
+        delete from intpk where pk=(select min(pk) from intpk);
+        update intpk set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from intpk);
+        -- dtix
+        insert into dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
+        -- wait
+		raise notice '"'Counter %'"', counter;
+	    counter := counter + 1;
+        perform pg_sleep(1);
+    end loop;
+end;
+commit;
+$$;
+'
 
 # #############################################################################
 # set default host and catalog if not specified
@@ -144,7 +220,7 @@ if [[ -n "$DB_HOST" && "$DB_HOST" != *"-${DB_SUFFIX}" ]]; then
     DB_HOST_FQDN=""
 fi
 
-# get avail sql server if not specified
+# get avail server if not specified
 if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
     AZ postgres flexible-server list -g "${RG_NAME}"; then
     
@@ -154,12 +230,21 @@ if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
     fi
 fi
 
+# get avail catalog if not specified
+if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]]; then
+
+    # check if secrets exists for this host
+    if get_secrets $DB_HOST; then
+        echo -e "\n USING VALUES FROM SECRETS \v"
+    fi
+fi
+
 # secrets was empty or invalid.
 if [[ -z "${DBA_USERNAME}" || -z "$DB_HOST" || "$DB_HOST" != *"-${DB_SUFFIX}" ]]; then 
     DB_HOST="${DB_BASENAME}-${DB_SUFFIX}"; 
 fi  
 
-if [[ -z "${DB_CATALOG}" ]]; then 
+if [[ -z "${DB_CATALOG}" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]]; then 
     DB_CATALOG="${CATALOG_BASENAME}"
 fi  
 
@@ -228,7 +313,7 @@ echo -e "\nAZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${
 echo -e "\nValidate or reset root password.  Could take 5min if resetting\n"
 
 export DB_PASSWORD_CHANGED=""
-if ! test_db_connect "$DBA_USERNAME" "$DBA_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "postgres"; then
+if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" test_db_connect; then
     if [[ -n "$DB_HOST_CREATED" ]]; then
         echo "can't connect to newly created host"
         cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
@@ -237,7 +322,7 @@ if ! test_db_connect "$DBA_USERNAME" "$DBA_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" 
     password_reset_db
 
     DB_PASSWORD_CHANGED="1"
-    if ! test_db_connect "$DBA_USERNAME" "$DBA_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "postgres"; then
+    if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" test_db_connect; then
         cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
     fi
 fi
@@ -247,36 +332,63 @@ fi
 
 echo -e "\nCreate catalog if not exists\n" 
 
-echo -e "select datname from pg_database where datname = '${DB_CATALOG}';" | SQLCLI ${DBA_USERNAME} ${DBA_PASSWORD} ${DB_HOST_FQDN} ${DB_PORT} postgres
-if [[ -z $(cat /tmp/psql_stdout.$$) ]]; then 
-    echo -e "create database ${DB_CATALOG};" | SQLCLI ${DBA_USERNAME} ${DBA_PASSWORD} ${DB_HOST_FQDN} ${DB_PORT} postgres   
-    if [[ -s /tmp/psql_stderr.$$ ]]; then
-        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
-    fi
+# get avail catalog if not specified
+DB_CATALOG="postgres" SQLCLI_DBA -c "select datname from pg_database where datname not in ('azure_maintenance', 'template0', 'template1', 'postgres', 'azure_sys', 'template0');" </dev/null
+
+# use existing catalog
+if [[ -n "$DB_HOST" ]] && [[ -z "${DB_CATALOG}" || "$DB_CATALOG" == "${CATALOG_BASENAME}" ]] && grep -q "^${DB_CATALOG}$" /tmp/psql_stdout.$$ ; then 
+    DB_CATALOG=$(cat /tmp/psql_stdout.$$)
+fi 
+
+# create if catalog does not exist
+if ! grep -q "^$DB_CATALOG" /tmp/psql_stdout.$$; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="postgres" SQLCLI_DBA -c "create database ${DB_CATALOG};"
 fi
 
 # #############################################################################
 # create catalog if not exists 
 
-echo -e "\nEnable wal_level logical\n" 
+echo -e "\nEnable wal_level=logical and require_secure_transport=off\n" 
 
-if ! AZ postgres flexible-server parameter set --server-name $DB_HOST --name  wal_level --value logical; then
-    cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
+PARAMETER_SET=""
+# lakeflow connect 
+if AZ postgres flexible-server parameter show --server-name $DB_HOST --name  wal_level; then
+    if [[ "logical" != "$(jq -r ".value" /tmp/az_stdout.$$)" ]]; then
+        if  ! AZ postgres flexible-server parameter set --server-name $DB_HOST --name  wal_level --value logical; then 
+            cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 1;
+        fi
+        PARAMETER_SET="1"
+    fi
 fi
 
-if ! AZ postgres flexible-server restart --name $DB_HOST; then 
+# lakeflow connect expects ssl disabled for now
+if AZ postgres flexible-server parameter show --server-name $DB_HOST --name  require_secure_transport ; then
+    if [[ "off" != "$(jq -r ".value" /tmp/az_stdout.$$)" ]]; then
+        if ! AZ postgres flexible-server parameter set --server-name $DB_HOST --name  require_secure_transport --value off; then
+            cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
+        fi
+        PARAMETER_SET="1"
+    fi
+fi
+
+# restart to take effect
+if [[ "$PARAMETER_SET" == "1" ]] && ! AZ postgres flexible-server restart --name $DB_HOST; then 
     cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
 fi
 
 # #############################################################################
 # save the credentials to secrets store for reuse
 
-if [[ -z "$DELETE_DB_AFTER_SLEEP" ]] && [[ "${DB_HOST_CREATED}" == "1" || "${DB_PASSWORD_CHANGED}" == "1" ]]; then
+if [[ -z "$DELETE_DB_AFTER_SLEEP" ]] && [[ "${DB_HOST_CREATED}" == "1" || "${DB_PASSWORD_CHANGED}" == "1" ]]; then 
+    echo "writing secrets create database that won't be deleted"
+    put_secrets
+elif [[  "${SECRETS_RETRIEVED}" == '1' && "${DB_PASSWORD_CHANGED}" == "1" ]] ; then
+    echo "writing secrets for existing database with new a DBA password"
     put_secrets
 fi
 
 # #############################################################################
 echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
-echo ""
+echo "Resource list"
 
 az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table

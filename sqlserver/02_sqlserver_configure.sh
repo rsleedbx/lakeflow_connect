@@ -9,6 +9,12 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   return 1
 fi
 
+db_replication_cleanup() {
+    local $GATEWAY_PIPELINE_ID=${1:${GATEWAY_PIPELINE_ID}}
+    echo "db clean up after pipeline stop $GATEWAY_PIPELINE_ID"    
+}
+export -f db_replication_cleanup
+
 # #############################################################################
 
 # connect to master catalog

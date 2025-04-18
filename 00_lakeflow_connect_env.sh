@@ -195,6 +195,8 @@ set_mi_fqdn_dba_host() {
 # used when creating.  preexisting db admin will be used
 export DBA_USERNAME=${DBA_USERNAME:-$(pwgen -1AB 16)}        # GCP hardcoded to defaults to sqlserver.  Make it same for Azure
 export USER_USERNAME=${USER_USERNAME:-$(pwgen -1AB 16)}      # set if not defined
+export DBA_BASENAME=${DBA_USERNAME}      # set if not defined
+export USER_BASENAME=${USER_USERNAME}      # set if not defined
 
 # DB and catalog basename
 export DB_BASENAME=${DB_BASENAME:-$(pwgen -1AB 16)}        # lower case, name seen on internet

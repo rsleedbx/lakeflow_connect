@@ -65,19 +65,20 @@ fi
 echo -e "\nCreate Connection \n"
 
 # create connection and delete or update
+# the echo is to make the if statement work
 if ! DBX connections get "$CONNECTION_NAME"; then
-    if ! DBX connections create --json '{
+    if ! DBX connections create --json "$(echo '{
         "name": "'"$CONNECTION_NAME"'",
         "connection_type": "'"$CONNECTION_TYPE"'",
         "comment": "'"CDC_CT_MODE=${CDC_CT_MODE}"'",
         "options": {
         "host": "'"$DB_HOST_FQDN"'",
         "port": "'"$DB_PORT"'",
-        '$(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]] ; then echo "\"trustServerCertificate\": \"true\",";fi)'
+        '$(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then printf '"trustServerCertificate": "true",'; fi)'
         "user": "'"$USER_USERNAME"'",
         "password": "'"${USER_PASSWORD}"'"
         }
-    }'; then
+    }')"; then
         cat /tmp/dbx_stderr.$$
         return 1
     fi
@@ -87,16 +88,15 @@ if ! DBX connections get "$CONNECTION_NAME"; then
     fi
 else
   # in case password is updated
-  if ! DBX connections update "$CONNECTION_NAME" --json '{
-        "comment": "'"CDC_CT_MODE=${CDC_CT_MODE}"'",
+  if ! DBX connections update "$CONNECTION_NAME" --json "$(echo '{
         "options": {
         "host": "'"$DB_HOST_FQDN"'",
         "port": "'"$DB_PORT"'",
-        '$(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]] ; then echo "\"trustServerCertificate\": \"true\",";fi)'
+        '$(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then echo "\"trustServerCertificate\": \"true\",";fi)'
         "user": "'"$USER_USERNAME"'",
         "password": "'"${USER_PASSWORD}"'"
         }
-    }'; then
+    }')"; then
         cat /tmp/dbx_stderr.$$
         return 1
     fi

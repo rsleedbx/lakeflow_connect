@@ -12,10 +12,13 @@ The database, firewall, connection, and pipelines are created and automatically 
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/00_lakeflow_connect_env.sh)
     ```
 
-- Start one of the below database instance 
+- Start one of the below database instances 
 
     <details>
-    <summary>Azure SQL Server</summary>
+    <summary>SQL Server</summary>
+
+    <details>
+    <summary>SQL Server: Azure SQL Server</summary>
 
     ```bash
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/01_azure_sqlserver.sh)
@@ -24,7 +27,7 @@ The database, firewall, connection, and pipelines are created and automatically 
     </details>
 
     <details>
-    <summary>Azure SQL Server Managed Instance</summary>
+    <summary>SQL Server: Azure SQL Server Managed Instance</summary>
     <b>The cost is relatively high if the free version is not available.</b>
 
     ```bash
@@ -34,7 +37,7 @@ The database, firewall, connection, and pipelines are created and automatically 
 
     </details>  
     <details>
-    <summary>Google CloudSQL SQL Server</summary>
+    <summary>SQL Server: Google CloudSQL SQL Server</summary>
 
     ```bash
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/01_gcloud_sqlserver_instance.sh)
@@ -42,15 +45,20 @@ The database, firewall, connection, and pipelines are created and automatically 
     ```
     </details>  
 
+    </details SQL Server>
+
     <details>
-    <summary>Azure Postgres Flexible Server</summary>
-    <b>The cost is $.05 an hour if the free version is not available.</b>
+    <summary>Postgres</summary>
+
+    <details>
+    <summary>Postgres: Azure Postgres Flexible Server</summary>
 
     ```bash
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/postgres/01_azure_postgres.sh)
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/postgres/02_postgres_configure.sh)
     ```
     </details>  
+    </details Postgres>  
 
 
 -  Start the Databricks Lakeflow Connect Database Demo

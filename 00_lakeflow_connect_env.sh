@@ -30,6 +30,8 @@ fi
 if ! declare -p PUT_DBX_SECRETS &> /dev/null; then
 export PUT_DBX_SECRETS=1
 fi
+
+# databricks options
 # used to recover from invalid secrets load
 declare -A vars_before_secrets
 export vars_before_secrets
@@ -39,24 +41,28 @@ export DBX_PROFILE_SECRETS=${DBX_PROFILE_SECRETS:-"DEFAULT"}
 
 # permissive firewall by default.  DO NOT USE WITH PRODUCTION SCHEMA or DATA
 export DB_FIREWALL_CIDRS="${DB_FIREWALL_CIDRS:-"0.0.0.0/0"}"
-
 export CLOUD_LOCATION="${CLOUD_LOCATION:-"East US"}"
 
-export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
-
+# Azure options
 export AZ_DB_TYPE=${AZ_DB_TYPE:-""}         # zmi|zsql
+export az_tenantDefaultDomain=${az_tenantDefaultDomain:-""}
+export az_id=${az_id:-""}
+export az_user_name=${az_user_name:-""}
 
-export CONNECTION_NAME="${CONNECTION_NAME:-""}"
-
+# used everywhere
 export DB_HOST=${DB_HOST:-""}
 export DB_HOST_FQDN=${DB_HOST_FQDN:-""}
 export DB_CATALOG=${DB_CATALOG:-""}
 export DBX_USERNAME=${DBX_USERNAME:-""}
 export DBA_PASSWORD=${DBA_PASSWORD:-""}
 export USER_PASSWORD=${USER_PASSWORD:-""}
-export az_tenantDefaultDomain=${az_tenantDefaultDomain:-""}
-export az_id=${az_id:-""}
-export az_user_name=${az_user_name:-""}
+
+# gateway pipeline options
+export CONNECTION_NAME="${CONNECTION_NAME:-""}"
+export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
+
+# ingestion pipeline options
+export SCD_TYPE=${SCD_TYPE:-""} # SCD_TYPE_1 | SCD_TYPE_2
 
 # display AZ commands
 AZ() {

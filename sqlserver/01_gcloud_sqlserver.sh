@@ -18,6 +18,8 @@ else
     export GCLOUD_DB_TYPE=gc
     export GCLOUD_DB_SUFFIX=gc
 fi
+export CONNECTION_TYPE=SQLSERVER
+export SOURCE_TYPE=$CONNECTION_TYPE
 
 DB_PORT=1433            # hardcoded by the cloud
 DBA_USERNAME=sqlserver  # hardcoded by the cloud

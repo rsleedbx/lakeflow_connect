@@ -19,8 +19,7 @@ NINE_CHAR_ID=$(date +%s | xargs printf "%08x\n") # number of seconds since epoch
 export NINE_CHAR_ID
 # databricks URL
 if ! DBX auth env; then cat /tmp/dbx_stderr.$$; return 1; fi
-DATABRICKS_HOST=$(jq -r .env.DATABRICKS_HOST /tmp/dbx_stdout.$$)
-export DATABRICKS_HOST
+DATABRICKS_HOST_NAME=$(jq -r .env.DATABRICKS_HOST /tmp/dbx_stdout.$$)
 # used for connection
 if [[ -z "$CONNECTION_NAME" ]]; then 
     CONNECTION_NAME=$(echo "${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr [.@] _)
@@ -38,7 +37,8 @@ export STAGING_SCHEMA=${TARGET_SCHEMA}
 
 # #############################################################################
 
-echo -e "\nCreate target and staging schemas \n"
+echo -e "\nCreate target and staging schemas"
+echo -e   "---------------------------------\n"
 
 if ! DBX schemas get "$TARGET_CATALOG.$TARGET_SCHEMA"; then
     if ! DBX schemas create "$TARGET_SCHEMA" "$TARGET_CATALOG"; then
@@ -62,22 +62,24 @@ fi
 
 # #############################################################################
 
-echo -e "\nCreate Connection \n"
+echo -e "\nCreate Connection"
+echo -e    "----------------\n"
 
 # create connection and delete or update
+# the echo is to make the if statement work
 if ! DBX connections get "$CONNECTION_NAME"; then
-    if ! DBX connections create --json '{
+    if ! DBX connections create --json "$(echo '{
         "name": "'"$CONNECTION_NAME"'",
-        "connection_type": "SQLSERVER",
+        "connection_type": "'"$CONNECTION_TYPE"'",
         "comment": "'"CDC_CT_MODE=${CDC_CT_MODE}"'",
         "options": {
         "host": "'"$DB_HOST_FQDN"'",
         "port": "'"$DB_PORT"'",
-        "trustServerCertificate": "true",
+        '$(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then printf '"trustServerCertificate": "true",'; fi)'
         "user": "'"$USER_USERNAME"'",
         "password": "'"${USER_PASSWORD}"'"
         }
-    }'; then
+    }')"; then
         cat /tmp/dbx_stderr.$$
         return 1
     fi
@@ -87,16 +89,15 @@ if ! DBX connections get "$CONNECTION_NAME"; then
     fi
 else
   # in case password is updated
-  if ! DBX connections update "$CONNECTION_NAME" --json '{
-        "comment": "'"CDC_CT_MODE=${CDC_CT_MODE}"'",
+  if ! DBX connections update "$CONNECTION_NAME" --json "$(echo '{
         "options": {
         "host": "'"$DB_HOST_FQDN"'",
         "port": "'"$DB_PORT"'",
-        "trustServerCertificate": "true",
+        '$(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then echo "\"trustServerCertificate\": \"true\",";fi)'
         "user": "'"$USER_USERNAME"'",
         "password": "'"${USER_PASSWORD}"'"
         }
-    }'; then
+    }')"; then
         cat /tmp/dbx_stderr.$$
         return 1
     fi
@@ -106,7 +107,8 @@ export CONNECTION_ID
 
 # #############################################################################
 
-echo -e "\nCreate Gateway Pipeline \n"
+echo -e "\nCreate Gateway Pipeline"
+echo -e   "-----------------------\n"
 
 if ! DBX pipelines create --json '{
 "name": "'"$GATEWAY_PIPELINE_NAME"'",
@@ -124,7 +126,8 @@ GATEWAY_PIPELINE_ID="$(jq -r '.pipeline_id' /tmp/dbx_stdout.$$)"
 export GATEWAY_PIPELINE_ID
 
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$GATEWAY_PIPELINE_ID" >> ~/nohup.out 2>&1 &
+    nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$GATEWAY_PIPELINE_ID">> ~/nohup.out 2>&1 &
+    nohup sleep "${STOP_AFTER_SLEEP}" && db_replication_cleanup "$GATEWAY_PIPELINE_ID">> ~/nohup.out 2>&1 &
 fi
 if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
     nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$GATEWAY_PIPELINE_ID"  >> ~/nohup.out 2>&1 &
@@ -132,26 +135,30 @@ fi
 
 # #############################################################################
 
-echo -e "\nCreate Ingestion Pipeline \n"
+echo -e "\nCreate Ingestion Pipeline"
+echo -e   "-------------------------\n"
 
 case "${CDC_CT_MODE}" in 
-"BOTH") 
+"BOTH"|"NONE") 
 echo "enabling replication on the schema"
-if ! DBX pipelines create --json '{
+if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
 "continuous": "true",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
+  "source_type": "'"$SOURCE_TYPE"'",
   "objects": [
      {"schema": {
         "source_catalog": "'"$DB_CATALOG"'",
         "source_schema": "'"$DB_SCHEMA"'",
         "destination_catalog": "'"$TARGET_CATALOG"'",
-        "destination_schema": "'"$TARGET_SCHEMA"'"
-        }}
+        "destination_schema": "'"$TARGET_SCHEMA"'",
+        "table_configuration": {
+        '$(if [[ -n "$SCD_TYPE" ]]; then echo "\"scd_type\": \"${SCD_TYPE}\"";fi)'
+        }}}
     ]
   }
-}'; then
+}')"; then
     cat /tmp/dbx_stderr.$$
     return 1
 fi
@@ -203,7 +210,7 @@ if ! DBX pipelines create --json '{
 fi
 ;;
 *)
-echo "CDC_CT_MODE=${CDC_CT_MODE} must be BOTH|CT|CDC"
+echo "CDC_CT_MODE=${CDC_CT_MODE} must be BOTH|CT|CDC|NONE"
 return 1
 ;;
 esac
@@ -232,7 +239,9 @@ fi
 
 # #############################################################################
 
-echo -e "\nCreate Ingestion Pipeline Trigger Jobs  \n"
+echo -e "\nCreate Ingestion Pipeline Trigger Jobs"
+echo -e   "--------------------------------------\n"
+
 
 if ! DBX jobs create --json '{
 "name":"'"$INGESTION_PIPELINE_NAME"'",
@@ -259,7 +268,9 @@ fi
 
 # #############################################################################
 
-echo -e "\nPermission Gateway, Ingestion, Jobs for debug \n"
+echo -e "\nPermission Gateway, Ingestion, Jobs for debug"
+echo -e   "---------------------------------------------\n"
+
 
 jobs_pipelines_permission='{"access_control_list": [{"user_name": "'"$DBX_USERNAME"'","permission_level": "IS_OWNER"},{"group_name": "users","permission_level": "CAN_MANAGE"}]}'
 
@@ -269,9 +280,11 @@ if ! DBX permissions update jobs      "$INGESTION_JOB_ID"      --json "$jobs_pip
 
 # #############################################################################
 
-echo -e "\n Start workload \n"
+echo -e "\n Start workload"
+echo -e   "---------------\n"
 
-cat <<EOF | sqlcmd -d "${DB_CATALOG}" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -e >/dev/null 2>&1 &
+if ! declare -p sql_dml_generator &> /dev/null; then
+sql_dml_generator="
 while ( 1 = 1 )
 begin
 IF OBJECT_ID(N'${DB_SCHEMA}.intpk', N'U') IS NOT NULL
@@ -285,7 +298,11 @@ IF OBJECT_ID(N'${DB_SCHEMA}.dtix', N'U') IS NOT NULL
 WAITFOR DELAY '00:00:01'
 end
 go
-EOF
+"
+    nohup sqlcmd -d "${DB_CATALOG}" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -e >/dev/null 2>&1 <<< $(echo "$sql_dml_generator") &
+else
+    SQLCLI >/dev/null 2>&1 <<< $(echo "$sql_dml_generator") &
+fi
 
 LOAD_GENERATOR_PID=$!
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
@@ -299,12 +316,13 @@ echo ""
 
 # #############################################################################
 
-echo -e "\nClick on UI \n"
+echo -e "\nClick on UI"
+echo -e   "-----------\n"
 
-echo -e "Staging schema: ${DATABRICKS_HOST}/explore/data/${STAGING_CATALOG}/${STAGING_SCHEMA}"
-echo -e "Target schema : ${DATABRICKS_HOST}/explore/data/${TARGET_CATALOG}/${TARGET_SCHEMA}"
-echo -e "Connection    : ${DATABRICKS_HOST}/explore/connections/${CONNECTION_NAME}"
-echo -e "Job           : ${DATABRICKS_HOST}/jobs/$INGESTION_JOB_ID \n"   
+echo -e "Staging schema: ${DATABRICKS_HOST_NAME}/explore/data/${STAGING_CATALOG}/${STAGING_SCHEMA}"
+echo -e "Target schema : ${DATABRICKS_HOST_NAME}/explore/data/${TARGET_CATALOG}/${TARGET_SCHEMA}"
+echo -e "Connection    : ${DATABRICKS_HOST_NAME}/explore/connections/${CONNECTION_NAME}"
+echo -e "Job           : ${DATABRICKS_HOST_NAME}/jobs/$INGESTION_JOB_ID \n"   
 
 if ! DBX pipelines list-pipelines --filter "name like '${WHOAMI}_%'"; then cat /tmp/dbx_stderr.$$; return 1; fi
-jq --arg url "$DATABRICKS_HOST" -r 'sort_by(.name) | .[] | [ .name, .pipeline_id, .state, ($url + "/pipelines/" + .pipeline_id) ] | @tsv' /tmp/dbx_stdout.$$ 
+jq --arg url "$DATABRICKS_HOST_NAME" -r 'sort_by(.name) | .[] | [ .name, .pipeline_id, .state, ($url + "/pipelines/" + .pipeline_id) ] | @tsv' /tmp/dbx_stdout.$$ 

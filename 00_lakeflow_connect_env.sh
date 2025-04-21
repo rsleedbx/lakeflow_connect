@@ -30,6 +30,8 @@ fi
 if ! declare -p PUT_DBX_SECRETS &> /dev/null; then
 export PUT_DBX_SECRETS=1
 fi
+
+# databricks options
 # used to recover from invalid secrets load
 declare -A vars_before_secrets
 export vars_before_secrets
@@ -39,24 +41,28 @@ export DBX_PROFILE_SECRETS=${DBX_PROFILE_SECRETS:-"DEFAULT"}
 
 # permissive firewall by default.  DO NOT USE WITH PRODUCTION SCHEMA or DATA
 export DB_FIREWALL_CIDRS="${DB_FIREWALL_CIDRS:-"0.0.0.0/0"}"
-
 export CLOUD_LOCATION="${CLOUD_LOCATION:-"East US"}"
 
-export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
-
+# Azure options
 export AZ_DB_TYPE=${AZ_DB_TYPE:-""}         # zmi|zsql
+export az_tenantDefaultDomain=${az_tenantDefaultDomain:-""}
+export az_id=${az_id:-""}
+export az_user_name=${az_user_name:-""}
 
-export CONNECTION_NAME="${CONNECTION_NAME:-""}"
-
+# used everywhere
 export DB_HOST=${DB_HOST:-""}
 export DB_HOST_FQDN=${DB_HOST_FQDN:-""}
 export DB_CATALOG=${DB_CATALOG:-""}
 export DBX_USERNAME=${DBX_USERNAME:-""}
 export DBA_PASSWORD=${DBA_PASSWORD:-""}
 export USER_PASSWORD=${USER_PASSWORD:-""}
-export az_tenantDefaultDomain=${az_tenantDefaultDomain:-""}
-export az_id=${az_id:-""}
-export az_user_name=${az_user_name:-""}
+
+# gateway pipeline options
+export CONNECTION_NAME="${CONNECTION_NAME:-""}"
+export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
+
+# ingestion pipeline options
+export SCD_TYPE=${SCD_TYPE:-""} # SCD_TYPE_1 | SCD_TYPE_2
 
 # display AZ commands
 AZ() {
@@ -133,6 +139,26 @@ SQLCMD() {
     fi
 }   
 
+PSQL() {
+    PWMASK="$@"
+    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
+    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+    echo -n psql "${PWMASK}"
+    if ! [ -t 0 ]; then
+        # echo "redirect stdin"
+        psql "$@" >/tmp/psql_stdout.$$ 2>/tmp/psql_stderr.$$
+    else
+        psql "$@" >/tmp/psql_stdout.$$ 2>/tmp/psql_stderr.$$
+    fi    
+    rc=$?
+    if [[ "$rc" != "0" ]]; then
+
+        echo ". failed with $rc"
+        return 1
+    else
+        echo ""
+    fi
+}  
 export WHOAMI=${WHOAMI:-$(whoami)}
 WHOAMI="$(echo "$WHOAMI" | tr -d '\-\.\_')"
 
@@ -175,9 +201,11 @@ set_mi_fqdn_dba_host() {
 # used when creating.  preexisting db admin will be used
 export DBA_USERNAME=${DBA_USERNAME:-$(pwgen -1AB 16)}        # GCP hardcoded to defaults to sqlserver.  Make it same for Azure
 export USER_USERNAME=${USER_USERNAME:-$(pwgen -1AB 16)}      # set if not defined
+export DBA_BASENAME=${DBA_USERNAME}      # set if not defined
+export USER_BASENAME=${USER_USERNAME}      # set if not defined
 
 # DB and catalog basename
-export DB_BASENAME=${DB_BASENAME:-$(pwgen -1AB 8)}        # lower case, name seen on internet
+export DB_BASENAME=${DB_BASENAME:-$(pwgen -1AB 16)}        # lower case, name seen on internet
 export CATALOG_BASENAME=${CATALOG_BASENAME:-$(pwgen -1AB 8)}
 
 # special char mess up eval and bash string substitution
@@ -185,7 +213,7 @@ export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \[\]\!\=\~\^\$\;\(\)\:\.\*
 export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \[\]\!\=\~\^\$\;\(\)\:\.\*\@\\\>\`\"\'\| 32 )}"  # set if not defined
 
 export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}}
-export DB_PORT=${DB_PORT:-1433}
+export DB_PORT=${DB_PORT:-""}
 export SECRETS_SCOPE=${SECRETS_SCOPE:-${WHOAMI}}
 
 # functions used 

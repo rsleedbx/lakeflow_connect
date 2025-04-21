@@ -2,7 +2,7 @@ This is a simple end to end Databricks Lakeflow Connect SQL Server demo.
 
 The database, firewall, connection, and pipelines are created and automatically deleted after an hour. A tiny database instance is create meant for a functional demo. 
 
-Copy and paste the commands in a terminal windows.
+Copy and paste the commands in a terminal window.
 
 # Steps to run a demo
 

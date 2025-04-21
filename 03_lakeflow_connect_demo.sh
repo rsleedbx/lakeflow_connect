@@ -139,7 +139,7 @@ echo -e "\nCreate Ingestion Pipeline"
 echo -e   "-------------------------\n"
 
 case "${CDC_CT_MODE}" in 
-"BOTH") 
+"BOTH"|"NONE") 
 echo "enabling replication on the schema"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
@@ -210,7 +210,7 @@ if ! DBX pipelines create --json '{
 fi
 ;;
 *)
-echo "CDC_CT_MODE=${CDC_CT_MODE} must be BOTH|CT|CDC"
+echo "CDC_CT_MODE=${CDC_CT_MODE} must be BOTH|CT|CDC|NONE"
 return 1
 ;;
 esac

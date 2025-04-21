@@ -66,8 +66,10 @@ SQLCLI() {
     local DB_SSLMODE=${DB_SSLMODE:-"allow"}
     local DB_URL=${DB_URL:-""}
     local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
-    local DB_STDOUT=${DB_STDOUT:-"/tmp/psql_stdout.$$"}
-    local DB_STDERR=${DB_STDERR:-"/tmp/psql_stderr.$$"}
+    # stdout and stderr file names
+    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/psql_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/psql_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
 
     PWMASK="${*}"
     PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
@@ -212,7 +214,8 @@ $$;
 # #############################################################################
 # set default host and catalog if not specified
 
-echo -e "\nLoading available host and catalog if not specified \n"
+echo -e "\nLoading available host and catalog if not specified"
+echo -e   "---------------------------------------------------\n"
 
 # make host name follow the naming convention
 if [[ -n "$DB_HOST" && "$DB_HOST" != *"-${DB_SUFFIX}" ]]; then
@@ -253,7 +256,9 @@ export DB_PORT=5432
 # #############################################################################
 # create sql server
 
-echo -e "\nCreate database server if not exists\n"
+echo -e "\nCreate database server if not exists"
+echo -e   "------------------------------------\n"
+
 
 export DB_HOST_CREATED=""
 if ! AZ postgres flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
@@ -296,7 +301,8 @@ echo ""
 
 # Run firewall rules before coming here
 
-echo -e "Creating permissive firewall rules if not exists\n"
+echo -e "Creating permissive firewall rules if not exists"
+echo -e "------------------------------------------------\n"
 
 # convert CIDR to range 
 
@@ -310,7 +316,9 @@ echo -e "\nAZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${
 # #############################################################################
 # Check password
 
-echo -e "\nValidate or reset root password.  Could take 5min if resetting\n"
+echo -e "\nValidate or reset root password.  Could take 5min if resetting"
+echo -e   "--------------------------------------------------------------\n"
+
 
 export DB_PASSWORD_CHANGED=""
 if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" test_db_connect; then
@@ -330,7 +338,8 @@ fi
 # #############################################################################
 # create catalog if not exists 
 
-echo -e "\nCreate catalog if not exists\n" 
+echo -e "\nCreate catalog if not exists" 
+echo -e   "----------------------------\n"
 
 # get avail catalog if not specified
 DB_CATALOG="postgres" SQLCLI_DBA -c "select datname from pg_database where datname not in ('azure_maintenance', 'template0', 'template1', 'postgres', 'azure_sys', 'template0');" </dev/null
@@ -348,7 +357,8 @@ fi
 # #############################################################################
 # create catalog if not exists 
 
-echo -e "\nEnable wal_level=logical and require_secure_transport=off\n" 
+echo -e "\nEnable wal_level=logical and require_secure_transport=off" 
+echo -e   "---------------------------------------------------------\n"
 
 PARAMETER_SET=""
 # lakeflow connect 

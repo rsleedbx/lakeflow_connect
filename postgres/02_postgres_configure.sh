@@ -17,10 +17,12 @@ DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASS
 # #############################################################################
 # create user login.  user by default = role + login
 
-if [[ "$USER_USERNAME" == "$USER_BASENAME" ]]; then
-DB_CATALOG="postgres" SQLCLI_DBA -c "select usename from pg_user where usename not in ('azuresu', 'replication')" </dev/null
-if grep -q -v -m 1 "^${DBA_USERNAME}$" /tmp/psql_stdout.$$; then 
-    USER_USERNAME=$(grep -v -m 1 "^${DBA_USERNAME}$"); fi
+if [[ -z "$USER_USERNAME" || "$USER_USERNAME" == "$USER_BASENAME" ]]; then
+    DB_CATALOG="postgres" SQLCLI_DBA -c "select usename from pg_user where usename not in ('azuresu', 'replication')" </dev/null
+    if grep -q -v -m 1 "^${DBA_USERNAME}$" /tmp/psql_stdout.$$; then 
+        USER_USERNAME=$(grep -v -m 1 "^${DBA_USERNAME}$" /tmp/psql_stdout.$$)
+        echo "Retrieving USER_USERNAME=$USER_USERNAME"
+    fi
 fi
 
 DB_CATALOG="postgres" SQLCLI_DBA <<EOF
@@ -115,20 +117,38 @@ else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
 # enable replication tables
 
 # get the table replication status
-DB_STDOUT="/tmp/psql_stdout_replication_table.$$" DB_STDERR="/tmp/psql_stderr_replication_table.$$"  SQLCLI <<EOF
+DB_OUT_SUFFIX="replication_table" DB_EXIT_ON_ERROR="PRINT_EXIT" SQLCLI </dev/null -c "
     SELECT nspname, relname, relreplident
     FROM pg_class as c JOIN pg_namespace AS ns ON c.relnamespace = ns.oid 
     WHERE nspname in ('$DB_SCHEMA') AND relname in ('dtix','intpk')
-EOF
+" 
 
-if [[ -n $(cat /tmp/psql_stdout_replication_table.$$ | grep "${DB_SCHEMA},dtix,f") ]]; 
-    then echo "table full replica enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else 
-    SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.dtix replica identity full;"
+# dtix does not have primary key
+if [[ "$CDC_CT_MODE" == "BOTH" || "$CDC_CT_MODE" == "CDC" ]]; then
+    if [[ -n $(cat /tmp/psql_stdout_replication_table.$$ | grep "${DB_SCHEMA},dtix,f") ]]; 
+        then echo "table full replica enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
+    else 
+        SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.dtix replica identity full;"
+    fi
+else
+    if [[ -n $(cat /tmp/psql_stdout_replication_table.$$ | grep "${DB_SCHEMA},dtix,n") ]]; 
+        then echo "table full replica disabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
+    else 
+        SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.dtix replica identity nothing;"
+    fi
 fi
 
-if [[ -n $(cat /tmp/psql_stdout_replication_table.$$ | grep "${DB_SCHEMA},intpk,d" ) ]]; then 
-    echo "table default replica enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else 
-    SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.intpk replica identity default;"
+# intpk has primary key
+if [[ "$CDC_CT_MODE" == "BOTH" || "$CDC_CT_MODE" == "CT" ]]; then
+    if [[ -n $(cat /tmp/psql_stdout_replication_table.$$ | grep "${DB_SCHEMA},intpk,d" ) ]]; then 
+        echo "table default replica enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
+    else 
+        SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.intpk replica identity default;"
+    fi
+else
+    if [[ -n $(cat /tmp/psql_stdout_replication_table.$$ | grep "${DB_SCHEMA},intpk,n") ]]; 
+        then echo "table full replica disabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
+    else 
+        SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.intpk replica identity nothing;"
+    fi
 fi

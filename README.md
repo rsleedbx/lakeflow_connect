@@ -7,7 +7,7 @@ Copy and paste the commands in a terminal windows.
 # Steps to run a demo
 
 - [CLI Install (one time)](README.installcli.md)
-- Open a new terminal
+- Open a new terminal using one of the ways below.  
 
     <details>
     <summary>OSX terminal</summary>
@@ -26,14 +26,20 @@ Copy and paste the commands in a terminal windows.
     </details>
 
     <details>
-    <summary>ttyd - from brew install for terminal in a browser experience</summary>
+    <summary>ttyd if setup from launchctl at <a href="http://localhost:7681/"> http://localhost:7681/</a></summary>
 
-    - open `terminal` or `iterm` from the above
-    - run ttyd
+    1. open a new tab from a browser with URL http://localhost:7681/ ![](./resources/ttyd.png)
+    </details>
+
+    <details>
+    <summary>ttyd started from a terminal at  <a href="http://localhost:7681/"> http://localhost:7681/</a></summary>
+
+    2. open `terminal` or `iterm` from the above
+    3. run ttyd 
     ```bash
-    ttyd --writable bash
+    nohup ttyd -W tmux new -A -s lakeflow.ttyd &
     ```
-    - open a new tab from a browser with URL http://localhost:7681/ ![](./resources/ttyd.png)
+    4. open a new tab from a browser with URL http://localhost:7681/ ![](./resources/ttyd.png)
     </details>
 
 - Initialize environment variables

@@ -15,7 +15,14 @@ One time CLI install steps
 
     ```bash
     brew tap microsoft/mssql-release
-    brew install pwgen ipcalc ttyd mssql-tools mysql-client libpq
+    brew install pwgen ipcalc ttyd tmux mssql-tools mysql-client libpq
+    ```
+- [Optional] Start `ttyd` on the default port 7681 with `tmux` for browser based terminal
+
+    ```bash
+    cd ~/Library/LaunchAgents/
+    curl -O https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/bin/lakeflow.ttypd.plist
+    launchctl remove lakeflow.ttyd; launchctl load ~/Library/LaunchAgents/lakeflow.ttyd.plist; launchctl start lakeflow.ttyd
     ```
 
 - Install Databricks [CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install).  Enter profile DEFAULT and host workspace. 

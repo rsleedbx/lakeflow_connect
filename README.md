@@ -98,3 +98,63 @@ Copy and paste the commands in a terminal windows.
     ```
 - Don't reboot the laptop while the demo is running.  Rebooting the laptop will kill the background cleanup jobs.
 
+# Frequent Used Environmental Variables
+
+## `CDC_CT_MODE`=**`BOTH`**|`CDC`|`CT`|`NONE` BOTH is the default
+
+Example usage:
+
+Only replicate tables that do not have primary keys.
+
+```bash
+export CDC_CT_MODE=CDC
+. ./00_lakeflow_connect_env.sh
+```
+
+| CDC_CT_MODE   | Postgres | SQL Server |
+| :-:   | ------- | ------- |
+| CDC           | set `replica full` on tables without pk | enable CDC on tables without pk |
+| CT            | set `replica default` on tables with pk  | enable CT on tables  with pk    |
+| BOTH          |  set `replica full` on tables without pk,  <br> set `replica default` on tables with pk  | enable CDC on tables without pk, <br> enable CT on tables  with pk   |
+| NONE          | set `replica nothing` on the tables | enable CDC and CT on the table |
+
+##  `DB_FIREWALL_CIDRS="0.0.0.0/0"` 
+
+The default is to open the database to public. For security, a random server name, catalog name, user name, dba name, user password, dba password are used.  The database is deleted in 1 hour by default.
+
+Example usage:
+
+Set up firewall to allow connections from `192.168.0.0/24` and `10.10.10.12/32`
+
+```bash
+export DB_FIREWALL_CIDRS="192.168.0.0/24 10.10.10.12/32"
+. ./00_lakeflow_connect_env.sh
+```
+
+## `DELETE_DB_AFTER_SLEEP=61m`
+
+The default is to delete the database objects (server, catalog, schema, tables, UC Connection) the script creates after this many minutes.  
+- To not delete, make it `DELETE_DB_AFTER_SLEEP=""`
+- To not change the time, make it `DELETE_DB_AFTER_SLEEP="67m"` for example.
+
+If the server was already created, then it won't be deleted even if this is set.
+
+Example usage:
+
+```bash
+export DELETE_DB_AFTER_SLEEP=""
+. ./00_lakeflow_connect_env.sh
+```
+
+## `DELETE_PIPELINES_AFTER_SLEEP=63m`
+
+The default is to delete the pipeline objects (gateway, ingestion, jobs) the script creates after this many minutes.  
+- To not delete, make it `DELETE_PIPELINES_AFTER_SLEEP=""`
+- To not change the time, make it `DELETE_PIPELINES_AFTER_SLEEP="67m"` for example.
+
+Example usage:
+
+```bash
+export DELETE_PIPELINES_AFTER_SLEEP=""
+. ./00_lakeflow_connect_env.sh
+```

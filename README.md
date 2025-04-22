@@ -1,6 +1,6 @@
 This is a simple end to end Databricks Lakeflow Connect SQL Server demo.
 
-The database, firewall, connection, and pipelines are created and automatically deleted after an hour. A tiny database instance is create meant for a functional demo. 
+The database, firewall, connection, and pipelines are created and automatically deleted after an hour. A tiny database instance is created meant for a functional demo. 
 
 # Install CLI tools 
 Copy and paste the commands in a terminal window to [install CLI (one time or upgrade)](README.installcli.md)
@@ -105,11 +105,28 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/03_lakeflow_connect_demo.sh)
     ```
 
+5.  [Optional] Interact with the database using the native CLI 
+
+    1. connect as an user using `$USER_USERNAME:$USER_PASSWORD@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG`
+   
+
+    ```bash
+    SQLCLI
+    ```
+
+    2. as a DBA user using `$DBA_USERNAME:$DBA_PASSWORD@$DB_HOST_FQDN:$DB_PORT/`postgres or master
+   
+    ```bash
+    SQLCLI_DBA
+    ```
+
 **Don't reboot the laptop while the demo is running.  Rebooting the laptop will kill the background cleanup jobs.**
 
 # Frequently Used Environmental Variables
 
-## `CDC_CT_MODE`=**`BOTH`**|`CDC`|`CT`|`NONE` BOTH is the default
+## `CDC_CT_MODE`=**`BOTH`**|`CDC`|`CT`|`NONE` 
+
+BOTH is the default
 
 Example usage:
 
@@ -127,7 +144,7 @@ export CDC_CT_MODE=CDC
 | BOTH          |  set `replica full` on tables without pk,  <br> set `replica default` on tables with pk  | enable CDC on tables without pk, <br> enable CT on tables  with pk   |
 | NONE          | set `replica nothing` on the tables | enable CDC and CT on the table |
 
-##  `DB_FIREWALL_CIDRS="0.0.0.0/0"` 
+##  `DB_FIREWALL_CIDRS="0.0.0.0/0"`
 
 The default is to open the database to public. For security, a random server name, catalog name, user name, dba name, user password, dba password are used.  The database is deleted in 1 hour by default.
 
@@ -167,3 +184,28 @@ Example usage:
 export DELETE_PIPELINES_AFTER_SLEEP=""
 . ./00_lakeflow_connect_env.sh
 ```
+
+# Quick reference
+
+## native cli quick reference
+
+### common postgres psql native commands
+
+1. `\l` list catalogs (databases)
+2. `\dn` list schema
+3. `\dt *.*` to list schemas and tables
+4. `\q` quit
+
+### common sqlserver sqlcmd native commands
+
+1. `select * from information_schema.schemata;` list schemas
+2. `select * from information_schema.tables;` to list schemas and tables
+
+## tmux quick reference
+
+1. Ctrl + `b` + `0` select window 0
+2. Ctrl + `b` + `1` select window 1
+3. Ctrl + `b` + `c` create a new windows
+4. Ctrl + `b` + `%` to split the current pane vertically.
+4. Ctrl + `b` + `"` to split the current pane horizontally.
+4. Ctrl + `b` + `x` to close the current pane.

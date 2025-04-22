@@ -21,7 +21,7 @@ One time CLI install steps
 
     ```bash
     cd ~/Library/LaunchAgents/
-    curl -O https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/bin/lakeflow.ttypd.plist
+    curl -O https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/bin/lakeflow.ttyd.plist
     launchctl remove lakeflow.ttyd; launchctl load ~/Library/LaunchAgents/lakeflow.ttyd.plist; launchctl start lakeflow.ttyd
     ```
 

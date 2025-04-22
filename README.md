@@ -1,6 +1,6 @@
 This is a simple end to end Databricks Lakeflow Connect SQL Server demo.
 
-The database, firewall, connection, and pipelines are created and automatically deleted after an hour. A tiny database instance is create meant for a functional demo. 
+The database, firewall, connection, and pipelines are created and automatically deleted after an hour. A tiny database instance is created meant for a functional demo. 
 
 # Install CLI tools 
 Copy and paste the commands in a terminal window to [install CLI (one time or upgrade)](README.installcli.md)

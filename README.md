@@ -1,6 +1,6 @@
-Welcome to Databricks Lakeflow Connect Demo Kit.
+# Welcome to Databricks Lakeflow Connect Demo Kit
 
-The demo kit simplify a demo and PoC by simplifying the following tasks:
+The demo kit make a demo and PoC super simple:
 
 1. Creates a tiny database on the cloud 
    1. Automatic secure names, passwords, firewall rules 
@@ -11,6 +11,8 @@ The demo kit simplify a demo and PoC by simplifying the following tasks:
 4. Generates DMLs on tables
    1. insert, update, delete on primary key table `intpk`
    2. insert on non primary key table `dtix`
+5. Customize via CLIs
+   1. Databricks CLI, database CLI, cloud CLI,  
 
 After two hours, all objects created are automatically deleted. A tiny database instance is created meant for a functional demo. 
 

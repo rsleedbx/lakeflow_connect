@@ -2,12 +2,12 @@ This is a simple end to end Databricks Lakeflow Connect SQL Server demo.
 
 The database, firewall, connection, and pipelines are created and automatically deleted after an hour. A tiny database instance is create meant for a functional demo. 
 
-Copy and paste the commands in a terminal window.
+# Install CLI tools 
+Copy and paste the commands in a terminal window to [install CLI (one time or upgrade)](README.installcli.md)
 
 # Steps to run a demo
 
-- [CLI Install (one time or upgrade)](README.installcli.md)
-- Open a new terminal using one of the ways below.  
+1. Open a new terminal using one of the ways below.  
 
     <details>
     <summary>OSX terminal</summary>
@@ -42,13 +42,15 @@ Copy and paste the commands in a terminal window.
     4. open a new tab from a browser with URL http://localhost:7681/ ![](./resources/ttyd.png)
     </details>
 
-- Initialize environment variables
+2. Initialize environment variables in a new terminal session for a new database
   
+    [Customized](#frequently-used-environmental-variables) with `export` variables if required.
+
     ```bash
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/00_lakeflow_connect_env.sh)
     ```
 
-- Start and configure one of the below database instances
+3. Start and configure one of the below database instances
 
     <details>
     <summary>SQL Server</summary>
@@ -97,14 +99,15 @@ Copy and paste the commands in a terminal window.
     </details Postgres>  
 
 
--  Start the Databricks Lakeflow Connect Database Demo
+4.  Start the Databricks Lakeflow Connect Database Demo
 
     ```bash
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/03_lakeflow_connect_demo.sh)
     ```
-- Don't reboot the laptop while the demo is running.  Rebooting the laptop will kill the background cleanup jobs.
 
-# Frequent Used Environmental Variables
+**Don't reboot the laptop while the demo is running.  Rebooting the laptop will kill the background cleanup jobs.**
+
+# Frequently Used Environmental Variables
 
 ## `CDC_CT_MODE`=**`BOTH`**|`CDC`|`CT`|`NONE` BOTH is the default
 

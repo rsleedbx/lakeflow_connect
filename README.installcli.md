@@ -16,6 +16,7 @@ One time CLI install steps
     ```bash
     brew tap microsoft/mssql-release
     brew install pwgen ipcalc ttyd tmux mssql-tools mysql-client libpq
+    brew link --force libpq
     ```
 - [Optional] Start `ttyd` on the default port 7681 with `tmux` for browser based terminal.  To test, go to http://localhost:7681
 

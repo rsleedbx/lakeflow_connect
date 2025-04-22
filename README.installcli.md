@@ -2,23 +2,23 @@ One time CLI install steps
 
 # Install CLI
 
-- Open a terminal on Mac OSX and install the following tools.  
+Open a terminal on Mac OSX and install the following tools.  
 
-- Install [brew](https://brew.sh/).  This will ask for a Mac laptop sudo password during the installation.  Make sure to adjust the PATH afterward.
+1. Install [brew](https://brew.sh/).  This will ask for a Mac laptop sudo password during the installation.  Make sure to adjust the PATH afterward.
 
     ```bash
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     export PATH=/opt/homebrew/bin:$PATH
     ```
 
-- Database clients for [SQL Server](microsoft/mssql-release), MySQL, and Postgres.  Accept licenses.
+2. Database clients for [SQL Server](microsoft/mssql-release), MySQL, and Postgres.  Accept licenses.
 
     ```bash
     brew tap microsoft/mssql-release
     brew install pwgen ipcalc ttyd tmux mssql-tools mysql-client libpq
     brew link --force libpq
     ```
-- [Optional] Start `ttyd` on the default port 7681 with `tmux` for browser based terminal.  To test, go to http://localhost:7681
+3. [Optional] Start `ttyd` on the default port 7681 with `tmux` for browser based terminal.  To test, go to http://localhost:7681
 
     ```bash
     mkdir -p ~/Library/LaunchAgents/
@@ -29,7 +29,7 @@ One time CLI install steps
     launchctl start lakeflow.ttyd
     ```
 
-- Install Databricks [CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install).  Enter profile DEFAULT and host workspace. Must be uppercase DEFAULT.  Take a look at `~/.databrickcfg` file.
+4. Install Databricks [CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install).  Enter profile DEFAULT and host workspace. Must be uppercase DEFAULT.  Take a look at `~/.databrickcfg` file.
 
     ```bash
     brew tap databricks/tap
@@ -37,7 +37,7 @@ One time CLI install steps
     databricks auth login
     ```
 
-- Install Microsoft Azure [CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-macos). 
+5. Install Microsoft Azure [CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-macos). 
 
     ```bash
     brew install azure-cli
@@ -45,7 +45,7 @@ One time CLI install steps
     az group list --output table
     ```
 
-- Install Google GCP [CLI](https://cloud.google.com/sdk/docs/install-sdk).  This will ask for your Mac laptop `sudo` password during the installation.
+6. Install Google GCP [CLI](https://cloud.google.com/sdk/docs/install-sdk).  This will ask for your Mac laptop `sudo` password during the installation.
 
     ```bash
     brew install --cask google-cloud-sdk
@@ -53,7 +53,7 @@ One time CLI install steps
     gcloud sql instances list
     ```
 
-- Amazon AWS CLI Commands.  (WIP)
+7. Amazon AWS CLI Commands.  (WIP)
 
     ```bash
     brew install awsclib

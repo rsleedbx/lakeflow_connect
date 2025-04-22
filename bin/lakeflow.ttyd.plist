@@ -11,10 +11,17 @@
         <string>ttyd</string>
         <string>-W</string>
         <string>/opt/homebrew/bin/tmux</string>
+<!-- uncomment to activate mouse support (but the system cut/paste does not work)
+        <string>set-option</string>
+        <string>-g</string>
+        <string>mouse</string>
+        <string>on</string>
+        <string>;</string>
+-->
         <string>new</string>
         <string>-A</string>
         <string>-s</string>
-        <string>Lakeflow</string>
+        <string>lakeflow</string>
     </array>
 
     <key>RunAtLoad</key>

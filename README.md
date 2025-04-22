@@ -105,6 +105,18 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/03_lakeflow_connect_demo.sh)
     ```
 
+5.  [Optional] to interact with the database using the native CLI 
+
+    1. as a user USER_USERNAME
+    ```
+    SQLCLI
+    ```
+
+    2. as a DBA DBA_USERNAME
+    ```
+    SQLCLI_DBA
+    ```
+
 **Don't reboot the laptop while the demo is running.  Rebooting the laptop will kill the background cleanup jobs.**
 
 # Frequently Used Environmental Variables

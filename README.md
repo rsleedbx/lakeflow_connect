@@ -157,11 +157,11 @@ export DB_FIREWALL_CIDRS="192.168.0.0/24 10.10.10.12/32"
 . ./00_lakeflow_connect_env.sh
 ```
 
-## `DELETE_DB_AFTER_SLEEP=61m`
+## `DELETE_DB_AFTER_SLEEP=131m`
 
 The default is to delete the database objects (server, catalog, schema, tables, UC Connection) the script creates after this many minutes.  
 - To not delete, make it `DELETE_DB_AFTER_SLEEP=""`
-- To not change the time, make it `DELETE_DB_AFTER_SLEEP="67m"` for example.
+- To change the time, make it `DELETE_DB_AFTER_SLEEP="67m"` for example.
 
 If the server was already created, then it won't be deleted even if this is set.
 
@@ -172,11 +172,11 @@ export DELETE_DB_AFTER_SLEEP=""
 . ./00_lakeflow_connect_env.sh
 ```
 
-## `DELETE_PIPELINES_AFTER_SLEEP=63m`
+## `DELETE_PIPELINES_AFTER_SLEEP=137m`
 
 The default is to delete the pipeline objects (gateway, ingestion, jobs) the script creates after this many minutes.  
 - To not delete, make it `DELETE_PIPELINES_AFTER_SLEEP=""`
-- To not change the time, make it `DELETE_PIPELINES_AFTER_SLEEP="67m"` for example.
+- To change the time, make it `DELETE_PIPELINES_AFTER_SLEEP="67m"` for example.
 
 Example usage:
 

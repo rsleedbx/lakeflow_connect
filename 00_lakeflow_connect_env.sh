@@ -10,17 +10,17 @@ fi
 
 # stop after sleep
 if ! declare -p STOP_AFTER_SLEEP &> /dev/null; then
-export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"31m"}      # blank is do not stop
+export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"127m"}      # blank is do not stop
 fi
 
 # delete database after sleep
 if ! declare -p DELETE_DB_AFTER_SLEEP &> /dev/null; then
-export DELETE_DB_AFTER_SLEEP=${DELETE_DB_AFTER_SLEEP:-"61m"}    # blank is do not delete
+export DELETE_DB_AFTER_SLEEP=${DELETE_DB_AFTER_SLEEP:-"131m"}    # blank is do not delete
 fi
 
 # delete lakeflow objects after sleep 
 if ! declare -p DELETE_PIPELINES_AFTER_SLEEP &> /dev/null; then
-export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"63m"}  # blank is do not delete
+export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"137m"}  # blank is do not delete
 fi
 
 # save credentials in secrets so that password reset won't be required

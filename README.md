@@ -6,7 +6,7 @@ Copy and paste the commands in a terminal window.
 
 # Steps to run a demo
 
-- [CLI Install (one time)](README.installcli.md)
+- [CLI Install (one time or upgrade)](README.installcli.md)
 - Open a new terminal using one of the ways below.  
 
     <details>
@@ -48,7 +48,7 @@ Copy and paste the commands in a terminal window.
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/00_lakeflow_connect_env.sh)
     ```
 
-- Start and configreu one of the below database instances
+- Start and configure one of the below database instances
 
     <details>
     <summary>SQL Server</summary>

@@ -2,7 +2,7 @@
 
 The demo kit make a demo and PoC super simple:
 
-1. Creates a tiny database on the cloud 
+1. Creates a tiny database in the cloud 
    1. Automatic secure names, passwords, firewall rules 
 2. Configures the database
    1. Enable replication on the catalog and tables

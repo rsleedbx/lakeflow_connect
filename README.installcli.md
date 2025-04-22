@@ -20,9 +20,12 @@ One time CLI install steps
 - [Optional] Start `ttyd` on the default port 7681 with `tmux` for browser based terminal
 
     ```bash
+    mkdir -p ~/Library/LaunchAgents/
     cd ~/Library/LaunchAgents/
     curl -O https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/bin/lakeflow.ttyd.plist
-    launchctl remove lakeflow.ttyd; launchctl load ~/Library/LaunchAgents/lakeflow.ttyd.plist; launchctl start lakeflow.ttyd
+    launchctl remove lakeflow.ttyd >/dev/null 2>&1
+    launchctl load ~/Library/LaunchAgents/lakeflow.ttyd.plist
+    launchctl start lakeflow.ttyd
     ```
 
 - Install Databricks [CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install).  Enter profile DEFAULT and host workspace. 

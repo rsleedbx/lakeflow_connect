@@ -105,15 +105,18 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/03_lakeflow_connect_demo.sh)
     ```
 
-5.  [Optional] to interact with the database using the native CLI 
+5.  [Optional] Interact with the database using the native CLI 
 
-    1. as a user USER_USERNAME
-    ```
+    1. connect as an user using `$USER_USERNAME:$USER_PASSWORD@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG`
+   
+
+    ```bash
     SQLCLI
     ```
 
-    2. as a DBA DBA_USERNAME
-    ```
+    2. as a DBA user using `$DBA_USERNAME:$DBA_PASSWORD@$DB_HOST_FQDN:$DB_PORT/`postgres or master
+   
+    ```bash
     SQLCLI_DBA
     ```
 
@@ -179,3 +182,17 @@ Example usage:
 export DELETE_PIPELINES_AFTER_SLEEP=""
 . ./00_lakeflow_connect_env.sh
 ```
+
+# SQLCLI Quick reference
+
+## common postgres psql native commands
+
+1. `\l` list catalogs (databases)
+2. `\dn` list schema
+3. `\dt *.*` to list schemas and tables
+4. `\q` quit
+
+## common sqlserver sqlcmd native commands
+
+1. `select * from information_schema.schemata;` list schemas
+2. `select * from information_schema.tables;` to list schemas and tables

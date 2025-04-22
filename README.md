@@ -44,7 +44,7 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
 
 2. Initialize environment variables in a new terminal session for a new database
   
-    [Customized](#frequently-used-environmental-variables) with `export` variables if required.
+    [Customize](#frequently-used-environmental-variables) with `export` commands as required.
 
     ```bash
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/00_lakeflow_connect_env.sh)
@@ -189,14 +189,14 @@ export DELETE_PIPELINES_AFTER_SLEEP=""
 
 ## native cli quick reference
 
-### common postgres psql native commands
+### common Postgres psql native commands
 
 1. `\l` list catalogs (databases)
 2. `\dn` list schema
 3. `\dt *.*` to list schemas and tables
 4. `\q` quit
 
-### common sqlserver sqlcmd native commands
+### common SQL Server sqlcmd native commands
 
 1. `select * from information_schema.schemata;` list schemas
 2. `select * from information_schema.tables;` to list schemas and tables

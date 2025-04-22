@@ -4,7 +4,10 @@
         "iterm",
         "Lakeflow",
         "nohup",
+        "psql",
+        "SQLCLI",
         "sqlcmd",
+        "tmux",
         "ttyd"
     ]
 }

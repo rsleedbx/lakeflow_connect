@@ -1,8 +1,10 @@
 {
     "cSpell.words": [
         "Databricks",
+        "iterm",
         "Lakeflow",
         "nohup",
-        "sqlcmd"
+        "sqlcmd",
+        "ttyd"
     ]
 }

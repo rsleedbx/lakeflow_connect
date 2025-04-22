@@ -16,8 +16,9 @@ One time CLI install steps
     ```bash
     brew tap microsoft/mssql-release
     brew install pwgen ipcalc ttyd tmux mssql-tools mysql-client libpq
+    brew link --force libpq
     ```
-- [Optional] Start `ttyd` on the default port 7681 with `tmux` for browser based terminal
+- [Optional] Start `ttyd` on the default port 7681 with `tmux` for browser based terminal.  To test, go to http://localhost:7681
 
     ```bash
     mkdir -p ~/Library/LaunchAgents/
@@ -28,7 +29,7 @@ One time CLI install steps
     launchctl start lakeflow.ttyd
     ```
 
-- Install Databricks [CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install).  Enter profile DEFAULT and host workspace. 
+- Install Databricks [CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install).  Enter profile DEFAULT and host workspace. Must be uppercase DEFAULT.  Take a look at `~/.databrickcfg` file.
 
     ```bash
     brew tap databricks/tap
@@ -41,15 +42,15 @@ One time CLI install steps
     ```bash
     brew install azure-cli
     az login
-    az group list --output table | more
+    az group list --output table
     ```
 
-- Install Google GCP [CLI](https://cloud.google.com/sdk/docs/install-sdk).  This will ask for a Mac laptop sudo password during the installation.
+- Install Google GCP [CLI](https://cloud.google.com/sdk/docs/install-sdk).  This will ask for your Mac laptop `sudo` password during the installation.
 
     ```bash
     brew install --cask google-cloud-sdk
     gcloud auth login
-    gcloud sql instances list | more
+    gcloud sql instances list
     ```
 
 - Amazon AWS CLI Commands.  (WIP)

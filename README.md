@@ -1,4 +1,4 @@
-Welcome to Databricks Lakeflow Connect Demo Kit.
+# Welcome to Databricks Lakeflow Connect Demo Kit
 
 The demo kit simplify a demo and PoC by simplifying the following tasks:
 

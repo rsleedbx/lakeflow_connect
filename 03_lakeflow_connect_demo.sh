@@ -304,7 +304,7 @@ else
     SQLCLI >/dev/null 2>&1 <<< $(echo "$sql_dml_generator") &
 fi
 
-LOAD_GENERATOR_PID=$!
+export LOAD_GENERATOR_PID=$!
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
     nohup sleep "${STOP_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
 fi

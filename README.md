@@ -1,8 +1,21 @@
-This is a simple end to end Databricks Lakeflow Connect SQL Server demo.
+Welcome to Databricks Lakeflow Connect Demo Kit.
 
-The database, firewall, connection, and pipelines are created and automatically deleted after an hour. A tiny database instance is created meant for a functional demo. 
+The demo kit simplify a demo and PoC by simplifying the following tasks:
+
+1. Creates a tiny database on the cloud 
+   1. Automatic secure names, passwords, firewall rules 
+2. Configures the database
+   1. Enable replication on the catalog and tables
+3. Starts the Lakeflow Connect 
+   1. Connection, staging and target schemas, Gateway and Ingestion pipelines, and Jobs 
+4. Generates DMLs on tables
+   1. insert, update, delete on primary key table `intpk`
+   2. insert on non primary key table `dtix`
+
+After two hours, all objects created are automatically deleted. A tiny database instance is created meant for a functional demo. 
 
 # Install CLI tools 
+This is a one time task in the beginning.
 Copy and paste the commands in a terminal window to [install CLI (one time or upgrade)](README.installcli.md)
 
 # Steps to run a demo

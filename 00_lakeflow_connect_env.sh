@@ -5,7 +5,13 @@ set -u
 
 # set tags that will resources remove using cloud scheduler
 if ! declare -p REMOVE_AFTER &> /dev/null; then
-export REMOVE_AFTER=$(date --date='+0 day' +%Y-%m-%d)   # blank is do not delete
+    if ! REMOVE_AFTER=$(date --date='+0 day' +%Y-%m-%d 2>/dev/null); then   # blank is do not delete
+        if ! REMOVE_AFTER=$(date -v '+0d' +%Y-%m-%d 2>/dev/null); then      # bsd style
+            echo "could not set the date"
+            kill -INT $$
+        fi
+    fi
+    export REMOVE_AFTER
 fi
 
 # stop after sleep

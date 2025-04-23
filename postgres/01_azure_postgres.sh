@@ -265,7 +265,7 @@ if ! AZ postgres flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
     if ! AZ postgres flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
         --database ${DB_CATALOG} \
-        --create-default-database disable \
+        --create-default-database Disabled \
         --node-count 1 \
         --public-access Enabled \
         --storage-size 32 \

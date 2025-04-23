@@ -342,7 +342,7 @@ echo -e "\nCreate catalog if not exists"
 echo -e   "----------------------------\n"
 
 # get avail catalog if not specified
-DB_CATALOG="postgres" SQLCLI_DBA -c "select datname from pg_database where datname not in ('azure_maintenance', 'template0', 'template1', 'postgres', 'azure_sys', 'template0');" </dev/null
+DB_CATALOG="postgres" SQLCLI_DBA -c "select datname from pg_database where datname not in ('azure_maintenance', , 'azure_sys', 'template0', 'template1', 'postgres');" </dev/null
 
 # use existing catalog
 if [[ -n "$DB_HOST" ]] && [[ -z "${DB_CATALOG}" || "$DB_CATALOG" == "${CATALOG_BASENAME}" ]] && grep -q "^${DB_CATALOG}$" /tmp/psql_stdout.$$ ; then 

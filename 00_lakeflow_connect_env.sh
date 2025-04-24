@@ -3,6 +3,12 @@
 # error out when undeclared variable is used
 set -u 
 
+# must be sourced for exports to continue to the next script
+if [ "$0" == "$BASH_SOURCE" ]; then
+  echo "Script is being executed directly. Please run as source $0"
+  exit 1
+fi
+
 # set tags that will resources remove using cloud scheduler
 if ! declare -p REMOVE_AFTER &> /dev/null; then
     if ! REMOVE_AFTER=$(date --date='+0 day' +%Y-%m-%d 2>/dev/null); then   # blank is do not delete
@@ -89,6 +95,7 @@ AZ() {
         echo ""
     fi
 }
+export -f AZ
 
 # display AZ commands
 GCLOUD() {
@@ -106,6 +113,7 @@ GCLOUD() {
         echo ""
     fi
 }
+export -f GCLOUD
 
 DBX() {
 local rc
@@ -123,6 +131,7 @@ local rc
         echo ""
     fi
 }
+export -f DBX
 
 SQLCMD() {
     PWMASK="$@"
@@ -143,7 +152,8 @@ SQLCMD() {
     else
         echo ""
     fi
-}   
+}  
+export -f SQLCMD 
 
 PSQL() {
     PWMASK="$@"
@@ -164,7 +174,9 @@ PSQL() {
     else
         echo ""
     fi
-}  
+} 
+export -f PSQL
+ 
 export WHOAMI=${WHOAMI:-$(whoami)}
 WHOAMI="$(echo "$WHOAMI" | tr -d '\-\.\_')"
 

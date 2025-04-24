@@ -25,7 +25,7 @@ fi
 # AZ Cloud
 
 if ! AZ account show; then
-    cat /tmp/dbx_stderr.$$ /tmp/az_stderr.$$
+    cat /tmp/az_stdout.$$ /tmp/az_stderr.$$
     return 1
 fi
 az_id="${az_id:-$(jq -r '.id' /tmp/az_stdout.$$)}" 

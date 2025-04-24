@@ -336,7 +336,7 @@ if ! AZ network nsg rule list --nsg-name "$nsg" -g "${RG_NAME}"; then cat /tmp/a
 if [[ "0" == "$(jq 'map_values(select(.priority==150)) | length' /tmp/az_stdout.$$)" ]]; then
     if ! AZ network nsg rule show --name "0_0_0_0_0" --nsg-name "$nsg" -g "${RG_NAME}"; then
         if ! AZ network nsg rule create --name "0_0_0_0_0" --nsg-name "$nsg" -g "${RG_NAME}"\
-            --source-address-prefixes "${DB_FIREWALL_CIDRS[*]}" \
+            --source-address-prefixes "${DB_FIREWALL_CIDRS[@]}" \
             --priority 151 --access Allow  --source-port-ranges "*" \
             --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges 1433 3342 --direction Inbound --protocol Tcp ; then    
             cat /tmp/az_stderr.$$

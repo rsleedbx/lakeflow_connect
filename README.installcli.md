@@ -11,7 +11,7 @@ Open a terminal on Mac OSX and install the following tools.
     export PATH=/opt/homebrew/bin:$PATH
     ```
 
-2. Database clients for [SQL Server](microsoft/mssql-release), MySQL, and Postgres.  Accept licenses.
+2. Database clients for SQL Server, MySQL, and Postgres.  Accept licenses.
 
     ```bash
     brew tap microsoft/mssql-release

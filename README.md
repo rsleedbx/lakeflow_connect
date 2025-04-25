@@ -124,7 +124,23 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
 
 # How to connect to database using the native CLI 
 
-1. as a DBA user using `$DBA_USERNAME:$DBA_PASSWORD@$DB_HOST_FQDN:$DB_PORT/`postgres or master after creating the database.
+The terminal session maintains variables that has host, user names and passwords.   The variable names used for a connection are:
+- $DBA_USERNAME
+- $DBA_PASSWORD
+- $USER_USERNAME
+- $USER_PASSWORD
+- $DB_FQDN
+- $DB_PORT
+- $DB_CATALOG
+
+    Example of `echo $DBA_USERNAME` to see the value.
+
+    ``` bash
+    L9P0RQPHY7:lakeflow_connect robert.lee$ echo $DBA_USERNAME
+    eirai7opei9ahp3h
+    ```
+
+1. type `SQLCLI_DBA` in the terminal after creating the database. This will issue commands to connect as the DBA using `$DBA_USERNAME:$DBA_PASSWORD@$DB_HOST_FQDN:$DB_PORT/`.  For postgres, psql is used and postgres is the catalog.  For sqlserver, sqlcmd is used and master is the catalog. 
    
 
     Example of postgres using `SQLCLI_DBA`:
@@ -143,7 +159,7 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
     ievoo7ai=>     
     ```
 
-2. connect as an user using `$USER_USERNAME:$USER_PASSWORD@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG` after configuring the database.
+2.  type `SQLCLI` in the terminal after configuring the database. This will issue commands to connect as the user using `$USER_USERNAME:$USER_PASSWORD@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG`.  For postgres, psql is used.  For sqlserver, sqlcmd is used. 
    
     Example of postgres using `SQLCLI`:
 
@@ -163,15 +179,14 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
 
 3.  Manually connecting to the database
 
-    - as a DBA
+    - type the following command to connect as the DBA
     ```bash
     PGPASSWORD=$DBA_PASSWORD psql "postgresql://${DBA_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/postgres?sslmode=allow"
     ```
-    - as a user
+    - type the following command to connect as the user
     ```bash
     PGPASSWORD=$USER_PASSWORD psql "postgresql://${USER_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/${DB_CATALOG}?sslmode=allow"
     ```
-
 
 # Frequently Used Environmental Variables
 

@@ -24,31 +24,23 @@ fi
 # #############################################################################
 # AZ Cloud
 
-if ! AZ account show; then
-    cat /tmp/az_stdout.$$ /tmp/az_stderr.$$
-    return 1
-fi
+DB_EXIT_ON_ERROR="PRINT_EXIT" AZ account show
 az_id="${az_id:-$(jq -r '.id' /tmp/az_stdout.$$)}" 
 az_tenantDefaultDomain="${az_tenantDefaultDomain:-$(jq -r '.tenantDefaultDomain' /tmp/az_stdout.$$)}"
 az_user_name="${az_user_name:-$(jq -r '.user.name' /tmp/az_stdout.$$)}"
 
 if [[ -n "${CLOUD_LOCATION}" ]]; then 
-    if ! AZ configure --defaults location="${CLOUD_LOCATION}" ; then
-        cat /tmp/az_stderr.$$; return 1
-    fi
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure --defaults location="${CLOUD_LOCATION}"
 fi
 
 # multiples tags are defined correctly below.  NOT A MISTAKE
 if ! AZ group show --resource-group "${RG_NAME}" ; then
-    if ! AZ group create --resource-group "${RG_NAME}" \
-        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" ; then
-        cat /tmp/az_stderr.$$; return 1
-    fi
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ group create --resource-group "${RG_NAME}" \
+        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}"
 fi
+
 RG_NAME=$(jq -r .name /tmp/az_stdout.$$)
-if ! AZ configure --defaults group="${RG_NAME}"; then 
-    cat /tmp/az_stderr.$$; return 1
-fi
+DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure --defaults group="${RG_NAME}"
 
 echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
 
@@ -70,6 +62,7 @@ SQLCLI() {
     local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
     local DB_STDOUT=${DB_STDOUT:-"/tmp/psql_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
     local DB_STDERR=${DB_STDERR:-"/tmp/psql_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_URL=${DB_URL:-"postgresql://${DB_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/${DB_CATALOG}?sslmode=${DB_SSLMODE}"}
 
     PWMASK="${*}"
     PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
@@ -78,16 +71,22 @@ SQLCLI() {
     PWMASK="${PWMASK//$DBA_USERNAME/\$DBA_USERNAME}"
     PWMASK="${PWMASK//$USER_USERNAME/\$USER_USERNAME}"
 
-    echo psql "${DB_USERNAME}:/${DB_CATALOG}" "${PWMASK}" 
+    if [[ $DB_PASSWORD == $DBA_PASSWORD ]]; then
+        echo "PGPASSWORD=\$DBA_PASSWORD psql ${DB_URL} ${PWMASK}" 
+    elif [[ $DB_PASSWORD == $USER_PASSWORD ]]; then
+        echo "PGPASSWORD=\$USER_PASSWORD psql ${DB_URL} ${PWMASK}" 
+    else
+        echo "psql ${DB_URL} -W ${PWMASK}"     
+    fi
 
     export PGPASSWORD=$DB_PASSWORD
     export PGCONNECT_TIMEOUT=$DB_LOGIN_TIMEOUT
     if [[ -t 0 ]]; then
         # stdin is attached
-        psql "postgresql://${DB_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/${DB_CATALOG}?sslmode=${DB_SSLMODE}" "${@}" 
+        psql "${DB_URL}" "${@}" 
     else
         # running in batch mode
-        psql "postgresql://${DB_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/${DB_CATALOG}?sslmode=${DB_SSLMODE}" -q --csv --tuples-only "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
+        psql "${DB_URL}" -q --csv --tuples-only "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
     fi
     RC=$?
     if [[ "$RC" != "0" && "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
@@ -136,9 +135,7 @@ export -f password_reset_db
 
 
 delete_db() {
-    if ! AZ postgres flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}"; then 
-        cat /tmp/az_stderr.$$; return 1;
-    fi
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}"
 }
 export -f delete_db
 
@@ -153,9 +150,7 @@ for fw_rule in "${@}"; do
         host_max="$address"
     fi
     if ! AZ  postgres flexible-server firewall-rule show --rule-name "${fw_rule_name}" --name "${DB_HOST}" -g "${RG_NAME}"; then
-        if ! AZ postgres flexible-server firewall-rule create --rule-name "${fw_rule_name}" --name "$DB_HOST" -g "${RG_NAME}" --start-ip-address "${host_min}" --end-ip-address "${host_max}"; then
-            cat /tmp/az_stderr.$$; return 1;
-        fi
+        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server firewall-rule create --rule-name "${fw_rule_name}" --name "$DB_HOST" -g "${RG_NAME}" --start-ip-address "${host_min}" --end-ip-address "${host_max}"
     fi
 done
 }
@@ -262,7 +257,7 @@ echo -e   "------------------------------------\n"
 export DB_HOST_CREATED=""
 if ! AZ postgres flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
     # sql server create does not support tags
-    if ! AZ postgres flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
         --database ${DB_CATALOG} \
         --create-default-database Disabled \
@@ -273,9 +268,8 @@ if ! AZ postgres flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
         --tier Burstable \
         --sku-name Standard_B1ms \
         --admin-user "${DBA_USERNAME}" \
-        --admin-password "${DBA_PASSWORD}"; then
-        cat /tmp/az_stderr.$$; return 1;
-    fi
+        --admin-password "${DBA_PASSWORD}"
+
     DB_HOST_CREATED="1"
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
         # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
@@ -306,7 +300,7 @@ echo -e "------------------------------------------------\n"
 
 # convert CIDR to range 
 
-if ! AZ postgres flexible-server firewall-rule list -n "${DB_HOST}" -g "${RG_NAME}"; then cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 1; fi
+DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server firewall-rule list -n "${DB_HOST}" -g "${RG_NAME}"
 if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
     firewall_rule_add "${DB_FIREWALL_CIDRS[@]}"
 fi
@@ -364,9 +358,7 @@ PARAMETER_SET=""
 # lakeflow connect 
 if AZ postgres flexible-server parameter show --server-name $DB_HOST --name  wal_level; then
     if [[ "logical" != "$(jq -r ".value" /tmp/az_stdout.$$)" ]]; then
-        if  ! AZ postgres flexible-server parameter set --server-name $DB_HOST --name  wal_level --value logical; then 
-            cat /tmp/az_stdout.$$ /tmp/az_stderr.$$; return 1;
-        fi
+        DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server parameter set --server-name $DB_HOST --name  wal_level --value logical
         PARAMETER_SET="1"
     fi
 fi
@@ -374,16 +366,14 @@ fi
 # lakeflow connect expects ssl disabled for now
 if AZ postgres flexible-server parameter show --server-name $DB_HOST --name  require_secure_transport ; then
     if [[ "off" != "$(jq -r ".value" /tmp/az_stdout.$$)" ]]; then
-        if ! AZ postgres flexible-server parameter set --server-name $DB_HOST --name  require_secure_transport --value off; then
-            cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
-        fi
+        DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server parameter set --server-name $DB_HOST --name  require_secure_transport --value off
         PARAMETER_SET="1"
     fi
 fi
 
 # restart to take effect
-if [[ "$PARAMETER_SET" == "1" ]] && ! AZ postgres flexible-server restart --name $DB_HOST; then 
-    cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
+if [[ "$PARAMETER_SET" == "1" ]]; then 
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server restart --name $DB_HOST
 fi
 
 # #############################################################################

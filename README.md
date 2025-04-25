@@ -16,6 +16,8 @@ The demo kit make a demo and PoC super simple:
 
 After two hours, all objects created are automatically deleted. A tiny database instance is created meant for a functional demo. 
 
+**Don't reboot the laptop while the demo is running.  Rebooting the laptop will kill the background cleanup jobs.**
+
 # Install CLI tools 
 This is a one time task in the beginning.
 Copy and paste the commands in a terminal window to [install CLI (one time or upgrade)](README.installcli.md)
@@ -120,11 +122,11 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/03_lakeflow_connect_demo.sh)
     ```
 
-5.  [Optional] Interact with the database using the native CLI 
+# How to connect to database using the native CLI 
 
-
-    1. as a DBA user using `$DBA_USERNAME:$DBA_PASSWORD@$DB_HOST_FQDN:$DB_PORT/`postgres or master after creating the database.
+1. as a DBA user using `$DBA_USERNAME:$DBA_PASSWORD@$DB_HOST_FQDN:$DB_PORT/`postgres or master after creating the database.
    
+
     Example of postgres using `SQLCLI_DBA`:
 
     ```bash
@@ -141,7 +143,7 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
     ievoo7ai=>     
     ```
 
-    2. connect as an user using `$USER_USERNAME:$USER_PASSWORD@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG` after configuring the database.
+2. connect as an user using `$USER_USERNAME:$USER_PASSWORD@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG` after configuring the database.
    
     Example of postgres using `SQLCLI`:
 
@@ -159,7 +161,7 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
     ievoo7ai=>      
     ```
 
-    3.  Manually connecting to the database
+3.  Manually connecting to the database
 
     - as a DBA
     ```bash
@@ -170,7 +172,6 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
     PGPASSWORD=$USER_PASSWORD psql "postgresql://${USER_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/${DB_CATALOG}?sslmode=allow"
     ```
 
-**Don't reboot the laptop while the demo is running.  Rebooting the laptop will kill the background cleanup jobs.**
 
 # Frequently Used Environmental Variables
 

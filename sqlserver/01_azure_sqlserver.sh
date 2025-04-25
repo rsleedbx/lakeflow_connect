@@ -188,7 +188,8 @@ done
 # #############################################################################
 # set default host and catalog if not specified
 
-echo -e "\nLoading available host and catalog if not specified \n"
+echo -e "\nLoading available host and catalog if not specified"
+echo -e   "---------------------------------------------------\n"
 
 # make host name follow the naming convention
 if [[ -n "$DB_HOST" && "$DB_HOST" != *"-${AZ_DB_SUFFIX}" ]]; then
@@ -243,7 +244,8 @@ export DB_PORT=1433
 # #############################################################################
 # create sql server
 
-echo -e "\nCreate sql server if not exists\n"
+echo -e "\nCreate sql server if not exists"
+echo -e   "-------------------------------\n"
 
 export DB_HOST_CREATED=""
 if ! AZ sql server show -n "${DB_HOST}" -g "${RG_NAME}"; then
@@ -278,7 +280,8 @@ echo ""
 # #############################################################################
 # create catalog if not existss - free, if not avail, then paid version
 
-echo -e "\nCreate catalog if not exists\n" 
+echo -e "\nCreate catalog if not exists" 
+echo -e   "----------------------------\n"
 
 if ! AZ sql db show -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
 
@@ -314,7 +317,8 @@ echo ""
 
 # Run firewall rules before coming here
 
-echo -e "Creating permissive firewall rules if not exists\n"
+echo -e "Creating permissive firewall rules if not exists"
+echo -e   "----------------------------------------------\n"
 
 # convert CIDR to range 
 
@@ -329,7 +333,8 @@ echo ""
 # #############################################################################
 # Check password
 
-echo -e "\nValidate or reset root password.  Could take 5min if resetting\n"
+echo -e "\nValidate or reset root password.  Could take 5min if resetting"
+echo -e   "--------------------------------------------------------------\n"
 
 export DB_PASSWORD_CHANGED=""
 if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then

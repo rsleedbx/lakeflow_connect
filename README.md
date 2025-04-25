@@ -122,17 +122,52 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
 
 5.  [Optional] Interact with the database using the native CLI 
 
-    1. connect as an user using `$USER_USERNAME:$USER_PASSWORD@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG`
+
+    1. as a DBA user using `$DBA_USERNAME:$DBA_PASSWORD@$DB_HOST_FQDN:$DB_PORT/`postgres or master after creating the database.
    
+    Example of postgres using `SQLCLI_DBA`:
 
     ```bash
-    SQLCLI
+    . postgres/01_azure_postgres.sh
+    SQLCLI_DBA
+
+    L9P0RQPHY7:lakeflow_connect robert.lee$ SQLCLI_DBA
+    PGPASSWORD=$DBA_PASSWORD psql postgresql://eirai7opei9ahp3h@eip9aeth9ke3oiji-zp.postgres.database.azure.com:5432/ievoo7ai?sslmode=allow 
+    psql (14.15 (Homebrew), server 16.8)
+    WARNING: psql major version 14, server major version 16.
+            Some psql features might not work.
+    Type "help" for help.
+
+    ievoo7ai=>     
     ```
 
-    2. as a DBA user using `$DBA_USERNAME:$DBA_PASSWORD@$DB_HOST_FQDN:$DB_PORT/`postgres or master
+    2. connect as an user using `$USER_USERNAME:$USER_PASSWORD@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG` after configuring the database.
    
+    Example of postgres using `SQLCLI`:
+
     ```bash
-    SQLCLI_DBA
+    . postgres/02_postgres_configure.sh 
+    SQLCLI
+
+    L9P0RQPHY7:lakeflow_connect robert.lee$ SQLCLI
+    PGPASSWORD=$USER_PASSWORD psql postgresql://eine4jeip3eej4ja@eip9aeth9ke3oiji-zp.postgres.database.azure.com:5432/ievoo7ai?sslmode=allow 
+    psql (14.15 (Homebrew), server 16.8)
+    WARNING: psql major version 14, server major version 16.
+            Some psql features might not work.
+    Type "help" for help.
+
+    ievoo7ai=>      
+    ```
+
+    3.  Manually connecting to the database
+
+    - as a DBA
+    ```bash
+    PGPASSWORD=$DBA_PASSWORD psql "postgresql://${DBA_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/postgres?sslmode=allow"
+    ```
+    - as a user
+    ```bash
+    PGPASSWORD=$USER_PASSWORD psql "postgresql://${USER_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/${DB_CATALOG}?sslmode=allow"
     ```
 
 **Don't reboot the laptop while the demo is running.  Rebooting the laptop will kill the background cleanup jobs.**

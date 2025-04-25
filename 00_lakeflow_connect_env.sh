@@ -76,8 +76,36 @@ export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
 # ingestion pipeline options
 export SCD_TYPE=${SCD_TYPE:-""} # SCD_TYPE_1 | SCD_TYPE_2
 
+CONT_OR_EXIT() {
+    if [[ "$RC" != "0" ]]; then
+        if [[ "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
+            echo " failed with $RC"; cat "${DB_STDOUT}" "${DB_STDERR}"
+            return $RC
+        elif [[ "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
+            echo " failed with ${RC}."; cat "${DB_STDOUT}" "${DB_STDERR}"
+            kill -INT $$
+        else
+            echo " failed with ${RC}. This is ok and continuing.";
+            return $RC
+        fi
+    elif [[ "$RC" == "0" ]]; then
+        echo "" 
+        if [[ "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" && ! -s "${DB_STDOUT}" ]]; then 
+                return 1
+        fi
+        return 0
+    fi
+}
+
 # display AZ commands
 AZ() {
+    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
+    # stdout and stderr file names
+    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/az_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/az_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local RC
+
     PWMASK="$@"
     PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
@@ -85,55 +113,110 @@ AZ() {
     PWMASK="${PWMASK//$az_id/\$az_id}"
     PWMASK="${PWMASK//$az_user_name/\$az_user_name}"
     echo -n az "${PWMASK}"
-    az "$@" >/tmp/az_stdout.$$ 2>/tmp/az_stderr.$$
-    rc=$?
-    if [[ "$rc" != "0" ]]; then
-
-        echo ". failed with $rc"
-        return 1
-    else
-        echo ""
+    az "$@" >${DB_STDOUT} 2>${DB_STDERR}
+    RC=$?
+    if [[ "$RC" != "0" ]]; then
+        if [[ "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
+            echo " failed with $RC"; cat "${DB_STDOUT}" "${DB_STDERR}"
+            return $RC
+        elif [[ "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
+            echo " failed with ${RC}."; cat "${DB_STDOUT}" "${DB_STDERR}"
+            kill -INT $$
+        else
+            echo " failed with ${RC} and continuing.";
+            return $RC
+        fi
+    elif [[ "$RC" == "0" ]]; then
+        echo "" 
+        if [[ "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" && ! -s "${DB_STDOUT}" ]]; then 
+                return 1
+        fi
+        return 0
     fi
 }
 export -f AZ
 
 # display AZ commands
 GCLOUD() {
+    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
+    # stdout and stderr file names
+    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/gcloud_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/gcloud_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local RC
+
     PWMASK="$@"
     PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
     echo -n gcloud "${PWMASK}" --quiet --format=json
-    gcloud "$@" --quiet --format=json >/tmp/gcloud_stdout.$$ 2>/tmp/gcloud_stderr.$$
-    rc=$?
-    if [[ "$rc" != "0" ]]; then
-
-        echo ". failed with $rc"
-        return 1
-    else
-        echo ""
+    gcloud "$@" --quiet --format=json >${DB_STDOUT} 2>${DB_STDERR}
+    RC=$?
+    if [[ "$RC" != "0" ]]; then
+        if [[ "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
+            echo " failed with $RC"; cat "${DB_STDOUT}" "${DB_STDERR}"
+            return $RC
+        elif [[ "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
+            echo " failed with ${RC}."; cat "${DB_STDOUT}" "${DB_STDERR}"
+            kill -INT $$
+        else
+            echo " failed with ${RC} and continuing.";
+            return $RC
+        fi
+    elif [[ "$RC" == "0" ]]; then
+        echo "" 
+        if [[ "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" && ! -s "${DB_STDOUT}" ]]; then 
+                return 1
+        fi
+        return 0
     fi
 }
 export -f GCLOUD
 
 DBX() {
-local rc
+    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
+    # stdout and stderr file names
+    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/dbx_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/dbx_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local RC
+
     PWMASK="$@"
     PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
     PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
+
     echo -n databricks "${PWMASK}"
-    databricks "$@" --output json >/tmp/dbx_stdout.$$ 2>/tmp/dbx_stderr.$$
-    rc=$?
-    if [[ "$rc" != "0" ]]; then
-        echo " failed with $rc"
-        return 1
-    else
-        echo ""
+    databricks "$@" --output json >${DB_STDOUT} 2>${DB_STDERR}
+    RC=$?
+    if [[ "$RC" != "0" ]]; then
+        if [[ "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
+            echo " failed with $RC"; cat "${DB_STDOUT}" "${DB_STDERR}"
+            return $RC
+        elif [[ "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
+            echo " failed with ${RC}."; cat "${DB_STDOUT}" "${DB_STDERR}"
+            kill -INT $$
+        else
+            echo " failed with ${RC} and continuing.";
+            return $RC
+        fi
+    elif [[ "$RC" == "0" ]]; then
+        echo "" 
+        if [[ "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" && ! -s "${DB_STDOUT}" ]]; then 
+                return 1
+        fi
+        return 0
     fi
 }
 export -f DBX
 
 SQLCMD() {
+    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
+    # stdout and stderr file names
+    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/dbx_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/dbx_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local RC
+
     PWMASK="$@"
     PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
@@ -144,13 +227,25 @@ SQLCMD() {
     else
         sqlcmd "$@" >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
     fi    
-    rc=$?
-    if [[ "$rc" != "0" ]]; then
 
-        echo ". failed with $rc"
-        return 1
-    else
-        echo ""
+    RC=$?
+    if [[ "$RC" != "0" ]]; then
+        if [[ "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
+            echo " failed with $RC"; cat "${DB_STDOUT}" "${DB_STDERR}"
+            return $RC
+        elif [[ "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
+            echo " failed with ${RC}."; cat "${DB_STDOUT}" "${DB_STDERR}"
+            kill -INT $$
+        else
+            echo " failed with ${RC}. This is ok and continuing.";
+            return $RC
+        fi
+    elif [[ "$RC" == "0" ]]; then
+        echo "" 
+        if [[ "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" && ! -s "${DB_STDOUT}" ]]; then 
+                return 1
+        fi
+        return 0
     fi
 }  
 export -f SQLCMD 
@@ -182,11 +277,8 @@ WHOAMI="$(echo "$WHOAMI" | tr -d '\-\.\_')"
 
 
 if [[ -z "$DBX_USERNAME" ]]; then
-    if ! DBX current-user me; then
-        DBX_USERNAME="$az_user_name"
-    else
-        DBX_USERNAME="$(jq -r .userName /tmp/dbx_stdout.$$)"
-    fi 
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX current-user me
+    DBX_USERNAME="$(jq -r .userName /tmp/dbx_stdout.$$)"
 fi
 export DBX_USERNAME
 

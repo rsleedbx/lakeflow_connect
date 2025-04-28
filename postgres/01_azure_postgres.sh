@@ -24,107 +24,25 @@ fi
 # #############################################################################
 # AZ Cloud
 
-DB_EXIT_ON_ERROR="PRINT_EXIT" AZ account show
-az_id="${az_id:-$(jq -r '.id' /tmp/az_stdout.$$)}" 
-az_tenantDefaultDomain="${az_tenantDefaultDomain:-$(jq -r '.tenantDefaultDomain' /tmp/az_stdout.$$)}"
-az_user_name="${az_user_name:-$(jq -r '.user.name' /tmp/az_stdout.$$)}"
-
-if [[ -n "${CLOUD_LOCATION}" ]]; then 
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure --defaults location="${CLOUD_LOCATION}"
-fi
-
-# multiples tags are defined correctly below.  NOT A MISTAKE
-if ! AZ group show --resource-group "${RG_NAME}" ; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ group create --resource-group "${RG_NAME}" \
-        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}"
-fi
-
-RG_NAME=$(jq -r .name /tmp/az_stdout.$$)
-DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure --defaults group="${RG_NAME}"
-
-echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
-
+AZ_INIT
 
 # #############################################################################
 # export functions
 
 SQLCLI() {
-    local DB_USERNAME=${DB_USERNAME:-${USER_USERNAME}}
-    local DB_PASSWORD=${DB_PASSWORD:-${USER_PASSWORD}}
-    local DB_HOST_FQDN=${DB_HOST_FQDN}
-    local DB_PORT=${DB_PORT:-${1433}}
-    local DB_CATALOG=${DB_CATALOG:-"postgres"}
-    local DB_LOGIN_TIMEOUT=${DB_LOGIN_TIMEOUT:-10}
-    local DB_SSLMODE=${DB_SSLMODE:-"allow"}
-    local DB_URL=${DB_URL:-""}
-    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
-    # stdout and stderr file names
-    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
-    local DB_STDOUT=${DB_STDOUT:-"/tmp/psql_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-    local DB_STDERR=${DB_STDERR:-"/tmp/psql_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-    local DB_URL=${DB_URL:-"postgresql://${DB_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/${DB_CATALOG}?sslmode=${DB_SSLMODE}"}
-
-    PWMASK="${*}"
-    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
-    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
-    PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
-    PWMASK="${PWMASK//$DBA_USERNAME/\$DBA_USERNAME}"
-    PWMASK="${PWMASK//$USER_USERNAME/\$USER_USERNAME}"
-
-    if [[ $DB_PASSWORD == $DBA_PASSWORD ]]; then
-        echo "PGPASSWORD=\$DBA_PASSWORD psql ${DB_URL} ${PWMASK}" 
-    elif [[ $DB_PASSWORD == $USER_PASSWORD ]]; then
-        echo "PGPASSWORD=\$USER_PASSWORD psql ${DB_URL} ${PWMASK}" 
-    else
-        echo "psql ${DB_URL} -W ${PWMASK}"     
-    fi
-
-    export PGPASSWORD=$DB_PASSWORD
-    export PGCONNECT_TIMEOUT=$DB_LOGIN_TIMEOUT
-    if [[ -t 0 ]]; then
-        # stdin is attached
-        psql "${DB_URL}" "${@}" 
-    else
-        # running in batch mode
-        psql "${DB_URL}" -q --csv --tuples-only "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
-    fi
-    RC=$?
-    if [[ "$RC" != "0" && "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
-        cat "${DB_STDOUT}" "${DB_STDERR}"
-        return $RC
-    elif [[ "$RC" != "0" && "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
-        cat "${DB_STDOUT}" "${DB_STDERR}"
-        kill -INT $$
-    elif [[ "$RC" == "0" && "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" ]]; then 
-        if [[ ! -s "${DB_STDOUT}" ]]; then 
-            return 1
-        else
-            return 0
-        fi
-    else
-        return $RC
-    fi
+    PSQL "${@}"
 }
 export -f SQLCLI
 
 SQLCLI_DBA() {
-    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" SQLCLI "${@}"
+    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" PSQL "${@}"
 }
 export -f SQLCLI_DBA
 
 SQLCLI_USER() {
-    DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" SQLCLI "${@}"
+    DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" PSQL "${@}"
 }
 export -f SQLCLI_USER
-
-test_db_connect() {
-    SQLCLI "$@" -c "select 1" </dev/null
-    RC=$?
-    if [[ $RC == 0 ]]; then 
-        echo "connect ok $DB_USERNAME@$DB_HOST_FQDN:${DB_PORT}/${DB_CATALOG}"
-    fi
-    return $RC
-}
 
 password_reset_db() {
     if ! AZ postgres flexible-server update -y -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
@@ -181,7 +99,7 @@ begin
 end;
 $$;
 '
-# will below fail?
+# below will fail on the gateway where the gateway waits for the commit to come
 export sql_dml_generator_does_not_work_with_gateway='
 set search_path='${DB_SCHEMA}';
 do $$
@@ -231,7 +149,7 @@ fi
 if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]]; then
 
     # check if secrets exists for this host
-    if get_secrets $DB_HOST; then
+    if get_secrets "$DB_HOST"; then
         echo -e "\n USING VALUES FROM SECRETS \v"
     fi
 fi
@@ -259,7 +177,7 @@ if ! AZ postgres flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
     # sql server create does not support tags
     DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
-        --database ${DB_CATALOG} \
+        --database "${DB_CATALOG}" \
         --create-default-database Disabled \
         --node-count 1 \
         --public-access Enabled \
@@ -313,9 +231,8 @@ echo -e "\nAZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${
 echo -e "\nValidate or reset root password.  Could take 5min if resetting"
 echo -e   "--------------------------------------------------------------\n"
 
-
 export DB_PASSWORD_CHANGED=""
-if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" test_db_connect; then
+if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" TEST_DB_CONNECT; then
     if [[ -n "$DB_HOST_CREATED" ]]; then
         echo "can't connect to newly created host"
         cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
@@ -324,7 +241,7 @@ if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgre
     password_reset_db
 
     DB_PASSWORD_CHANGED="1"
-    if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" test_db_connect; then
+    if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" TEST_DB_CONNECT; then
         cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
     fi
 fi
@@ -356,39 +273,39 @@ echo -e   "---------------------------------------------------------\n"
 
 PARAMETER_SET=""
 # lakeflow connect 
-if AZ postgres flexible-server parameter show --server-name $DB_HOST --name  wal_level; then
+if AZ postgres flexible-server parameter show --server-name "$DB_HOST" --name  wal_level; then
     if [[ "logical" != "$(jq -r ".value" /tmp/az_stdout.$$)" ]]; then
-        DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server parameter set --server-name $DB_HOST --name  wal_level --value logical
+        DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server parameter set --server-name "$DB_HOST" --name  wal_level --value logical
         PARAMETER_SET="1"
     fi
 fi
 
 # lakeflow connect expects ssl disabled for now
-if AZ postgres flexible-server parameter show --server-name $DB_HOST --name  require_secure_transport ; then
+if AZ postgres flexible-server parameter show --server-name "$DB_HOST" --name  require_secure_transport ; then
     if [[ "off" != "$(jq -r ".value" /tmp/az_stdout.$$)" ]]; then
-        DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server parameter set --server-name $DB_HOST --name  require_secure_transport --value off
+        DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server parameter set --server-name "$DB_HOST" --name  require_secure_transport --value off
         PARAMETER_SET="1"
     fi
 fi
 
 # restart to take effect
 if [[ "$PARAMETER_SET" == "1" ]]; then 
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server restart --name $DB_HOST
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server restart --name "$DB_HOST"
 fi
 
 # #############################################################################
 # save the credentials to secrets store for reuse
 
 if [[ -z "$DELETE_DB_AFTER_SLEEP" ]] && [[ "${DB_HOST_CREATED}" == "1" || "${DB_PASSWORD_CHANGED}" == "1" ]]; then 
-    echo "writing secrets create database that won't be deleted"
+    echo "writing secrets for created database that won't be deleted"
     put_secrets
 elif [[  "${SECRETS_RETRIEVED}" == '1' && "${DB_PASSWORD_CHANGED}" == "1" ]] ; then
-    echo "writing secrets for existing database with new a DBA password"
+    echo "writing secrets for existing database with new DBA password"
     put_secrets
 fi
 
 # #############################################################################
-echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
-echo "Resource list"
+echo -e "\nResource list"
+echo -e   "-------------\n"
 
 az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table

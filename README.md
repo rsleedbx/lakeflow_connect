@@ -188,6 +188,7 @@ The terminal session maintains variables that has host, user names and passwords
     PGPASSWORD=$USER_PASSWORD psql "postgresql://${USER_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/${DB_CATALOG}?sslmode=allow"
     ```
 
+
 # Frequently Used Environmental Variables
 
 ## `CDC_CT_MODE`=**`BOTH`**|`CDC`|`CT`|`NONE` 

@@ -24,34 +24,7 @@ fi
 # #############################################################################
 # AZ Cloud
 
-if ! AZ account show; then
-    cat /tmp/dbx_stderr.$$ /tmp/az_stderr.$$
-    return 1
-fi
-az_id="${az_id:-$(jq -r '.id' /tmp/az_stdout.$$)}" 
-az_tenantDefaultDomain="${az_tenantDefaultDomain:-$(jq -r '.tenantDefaultDomain' /tmp/az_stdout.$$)}"
-az_user_name="${az_user_name:-$(jq -r '.user.name' /tmp/az_stdout.$$)}"
-
-if [[ -n "${CLOUD_LOCATION}" ]]; then 
-    if ! AZ configure --defaults location="${CLOUD_LOCATION}" ; then
-        cat /tmp/az_stderr.$$; return 1
-    fi
-fi
-
-# multiples tags are defined correctly below.  NOT A MISTAKE
-if ! AZ group show --resource-group "${RG_NAME}" ; then
-    if ! AZ group create --resource-group "${RG_NAME}" \
-        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" ; then
-        cat /tmp/az_stderr.$$; return 1
-    fi
-fi
-RG_NAME=$(jq -r .name /tmp/az_stdout.$$)
-if ! AZ configure --defaults group="${RG_NAME}"; then 
-    cat /tmp/az_stderr.$$; return 1
-fi
-
-echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
-
+AZ_INIT
 
 # #############################################################################
 # export functions

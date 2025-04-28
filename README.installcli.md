@@ -49,7 +49,8 @@ Open a terminal on Mac OSX and install the following tools.
 
     ```bash
     brew install --cask google-cloud-sdk
-    gcloud auth login
+    gcloud auth login                       # used by glcoud commands
+    gcloud auth application-default login   # used by apps such as terraform
     gcloud sql instances list
     ```
 

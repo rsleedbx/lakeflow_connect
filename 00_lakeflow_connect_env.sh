@@ -76,6 +76,8 @@ export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
 # ingestion pipeline options
 export SCD_TYPE=${SCD_TYPE:-""} # SCD_TYPE_1 | SCD_TYPE_2
 
+# call using 
+# RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
 CONT_OR_EXIT() {
     if [[ "$RC" != "0" ]]; then
         if [[ "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
@@ -114,27 +116,54 @@ AZ() {
     PWMASK="${PWMASK//$az_user_name/\$az_user_name}"
     echo -n az "${PWMASK}"
     az "$@" >${DB_STDOUT} 2>${DB_STDERR}
+
     RC=$?
-    if [[ "$RC" != "0" ]]; then
-        if [[ "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
-            echo " failed with $RC"; cat "${DB_STDOUT}" "${DB_STDERR}"
-            return $RC
-        elif [[ "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
-            echo " failed with ${RC}."; cat "${DB_STDOUT}" "${DB_STDERR}"
-            kill -INT $$
-        else
-            echo " failed with ${RC} and continuing.";
-            return $RC
-        fi
-    elif [[ "$RC" == "0" ]]; then
-        echo "" 
-        if [[ "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" && ! -s "${DB_STDOUT}" ]]; then 
-                return 1
-        fi
-        return 0
-    fi
+    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
+    return $?
 }
 export -f AZ
+
+AZ_INIT() {
+
+    echo -e "az init"
+    echo -e "-------\n"
+
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ account show
+    export az_id="${az_id:-$(jq -r '.id' /tmp/az_stdout.$$)}" 
+    export az_tenantDefaultDomain="${az_tenantDefaultDomain:-$(jq -r '.tenantDefaultDomain' /tmp/az_stdout.$$)}"
+    export az_user_name="${az_user_name:-$(jq -r '.user.name' /tmp/az_stdout.$$)}"
+
+    # set default location
+    if [[ -n "${CLOUD_LOCATION}" ]]; then 
+        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure ${CLOUD_LOCATION:+--defaults location="${CLOUD_LOCATION}"}
+    fi
+
+    # create resource group
+    if ! AZ group show --resource-group "${RG_NAME}" ; then
+        # multiples tags are defined correctly below.  NOT A MISTAKE
+        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ group create --resource-group "${RG_NAME}" \
+            --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}"
+    fi
+
+    # set default resource group
+    RG_NAME=$(jq -r .name /tmp/az_stdout.$$)
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure --defaults group="${RG_NAME}"    
+
+    # show billing for the resource group
+    echo -e "\nBilling for ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
+}
+export -f AZ_INIT
+
+GCLOUD_INIT() {
+
+    echo -e "gcloud init"
+    echo -e "-----------\n"
+
+    DB_EXIT_ON_ERROR="PRINT_EXIT" GCLOUD config list
+    export GCLOUD_PROJECT="$(jq -r ".core.project" /tmp/gcloud_stdout.$$)"
+    export GCLOUD_REGION="$(jq -r ".compute.region" /tmp/gcloud_stdout.$$)"
+    export GCLOUD_ZONE="$(jq -r ".compute.zone" /tmp/gcloud_stdout.$$)"
+}
 
 # display AZ commands
 GCLOUD() {
@@ -150,25 +179,10 @@ GCLOUD() {
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
     echo -n gcloud "${PWMASK}" --quiet --format=json
     gcloud "$@" --quiet --format=json >${DB_STDOUT} 2>${DB_STDERR}
+
     RC=$?
-    if [[ "$RC" != "0" ]]; then
-        if [[ "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
-            echo " failed with $RC"; cat "${DB_STDOUT}" "${DB_STDERR}"
-            return $RC
-        elif [[ "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
-            echo " failed with ${RC}."; cat "${DB_STDOUT}" "${DB_STDERR}"
-            kill -INT $$
-        else
-            echo " failed with ${RC} and continuing.";
-            return $RC
-        fi
-    elif [[ "$RC" == "0" ]]; then
-        echo "" 
-        if [[ "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" && ! -s "${DB_STDOUT}" ]]; then 
-                return 1
-        fi
-        return 0
-    fi
+    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
+    return $?
 }
 export -f GCLOUD
 
@@ -187,25 +201,10 @@ DBX() {
 
     echo -n databricks "${PWMASK}"
     databricks "$@" --output json >${DB_STDOUT} 2>${DB_STDERR}
+
     RC=$?
-    if [[ "$RC" != "0" ]]; then
-        if [[ "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
-            echo " failed with $RC"; cat "${DB_STDOUT}" "${DB_STDERR}"
-            return $RC
-        elif [[ "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
-            echo " failed with ${RC}."; cat "${DB_STDOUT}" "${DB_STDERR}"
-            kill -INT $$
-        else
-            echo " failed with ${RC} and continuing.";
-            return $RC
-        fi
-    elif [[ "$RC" == "0" ]]; then
-        echo "" 
-        if [[ "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" && ! -s "${DB_STDOUT}" ]]; then 
-                return 1
-        fi
-        return 0
-    fi
+    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
+    return $?
 }
 export -f DBX
 
@@ -213,8 +212,8 @@ SQLCMD() {
     local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
     # stdout and stderr file names
     local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
-    local DB_STDOUT=${DB_STDOUT:-"/tmp/dbx_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-    local DB_STDERR=${DB_STDERR:-"/tmp/dbx_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/sqlcmd_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/sqlcmd_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
     local RC
 
     PWMASK="$@"
@@ -229,58 +228,68 @@ SQLCMD() {
     fi    
 
     RC=$?
-    if [[ "$RC" != "0" ]]; then
-        if [[ "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
-            echo " failed with $RC"; cat "${DB_STDOUT}" "${DB_STDERR}"
-            return $RC
-        elif [[ "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
-            echo " failed with ${RC}."; cat "${DB_STDOUT}" "${DB_STDERR}"
-            kill -INT $$
-        else
-            echo " failed with ${RC}. This is ok and continuing.";
-            return $RC
-        fi
-    elif [[ "$RC" == "0" ]]; then
-        echo "" 
-        if [[ "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" && ! -s "${DB_STDOUT}" ]]; then 
-                return 1
-        fi
-        return 0
-    fi
+    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
+    return $?
 }  
 export -f SQLCMD 
 
 PSQL() {
-    PWMASK="$@"
+    local DB_USERNAME=${DB_USERNAME:-${USER_USERNAME}}
+    local DB_PASSWORD=${DB_PASSWORD:-${USER_PASSWORD}}
+    local DB_HOST_FQDN=${DB_HOST_FQDN}
+    local DB_PORT=${DB_PORT:-${1433}}
+    local DB_CATALOG=${DB_CATALOG:-"postgres"}
+    local DB_LOGIN_TIMEOUT=${DB_LOGIN_TIMEOUT:-10}
+    local DB_SSLMODE=${DB_SSLMODE:-"allow"}
+    local DB_URL=${DB_URL:-""}
+    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
+    # stdout and stderr file names
+    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/psql_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/psql_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_URL=${DB_URL:-"postgresql://${DB_USERNAME}@${DB_HOST_FQDN}:${DB_PORT}/${DB_CATALOG}?sslmode=${DB_SSLMODE}"}
+
+    PWMASK="${*}"
     PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
-    echo -n psql "${PWMASK}"
-    if ! [ -t 0 ]; then
-        # echo "redirect stdin"
-        psql "$@" >/tmp/psql_stdout.$$ 2>/tmp/psql_stderr.$$
-    else
-        psql "$@" >/tmp/psql_stdout.$$ 2>/tmp/psql_stderr.$$
-    fi    
-    rc=$?
-    if [[ "$rc" != "0" ]]; then
+    PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
+    PWMASK="${PWMASK//$DBA_USERNAME/\$DBA_USERNAME}"
+    PWMASK="${PWMASK//$USER_USERNAME/\$USER_USERNAME}"
 
-        echo ". failed with $rc"
-        return 1
+    if [[ $DB_PASSWORD == $DBA_PASSWORD ]]; then
+        echo "PGPASSWORD=\$DBA_PASSWORD psql ${DB_URL} ${PWMASK}" 
+    elif [[ $DB_PASSWORD == $USER_PASSWORD ]]; then
+        echo "PGPASSWORD=\$USER_PASSWORD psql ${DB_URL} ${PWMASK}" 
     else
-        echo ""
+        echo "psql ${DB_URL} -W ${PWMASK}"     
     fi
-} 
+
+    export PGPASSWORD=$DB_PASSWORD
+    export PGCONNECT_TIMEOUT=$DB_LOGIN_TIMEOUT
+    if [[ -t 0 ]]; then
+        # stdin is attached
+        psql "${DB_URL}" "${@}" 
+    else
+        # running in batch mode
+        psql "${DB_URL}" -q --csv --tuples-only "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
+    fi
+
+    RC=$?
+    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
+    return $?
+}
 export -f PSQL
  
-export WHOAMI=${WHOAMI:-$(whoami)}
-WHOAMI="$(echo "$WHOAMI" | tr -d '\-\.\_')"
-
+export WHOAMI_USERNAME=${WHOAMI_USERNAME:-$(whoami)}
+export WHOAMI="$(echo "$WHOAMI_USERNAME" | tr -d '\-\.\_')"
 
 if [[ -z "$DBX_USERNAME" ]]; then
     DB_EXIT_ON_ERROR="PRINT_EXIT" DBX current-user me
     DBX_USERNAME="$(jq -r .userName /tmp/dbx_stdout.$$)"
 fi
 export DBX_USERNAME
+export DBX_USERNAME_NO_DOMAIN="${DBX_USERNAME%%@*}"                  # remove everything after the first @
+export DBX_USERNAME_NO_DOMAIN_DOT="${DBX_USERNAME_NO_DOMAIN//./_}"   # . to _
 
 export RG_NAME=${RG_NAME:-${WHOAMI}-rg}                # resource group name
 
@@ -354,6 +363,18 @@ test_db_connect() {
         cat /tmp/select1_stdout.$$ /tmp/select1_stderr.$$ 
         return 1 
     fi
+}
+
+TEST_DB_CONNECT() {
+    local RC
+    echo "select 1" | SQLCLI >/dev/null 2>&1
+    RC=$?
+    if [[ $RC == 0 ]]; then 
+        echo "connect ok $DB_USERNAME@$DB_HOST_FQDN:${DB_PORT}/${DB_CATALOG}"
+    else
+        echo "connect NOT ok $DB_USERNAME@$DB_HOST_FQDN:${DB_PORT}/${DB_CATALOG}"
+    fi
+    return $RC
 }
 
 # #############################################################################

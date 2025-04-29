@@ -64,6 +64,7 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
     [Customize](#frequently-used-environmental-variables) with `export` commands as required.
 
     ```bash
+    /opt/homebrew/bin/bash
     source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/00_lakeflow_connect_env.sh)
     ```
 

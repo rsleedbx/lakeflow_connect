@@ -9,6 +9,16 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
+if [ -z "$BASH_VERSINFO" ]; then
+    echo "BASH_VERSION not defined"
+    kill -INT $$
+fi
+
+if (( ${BASH_VERSINFO[0]} < 4 )); then
+    echo "bash 4.0 or greater needed. $BASH_VERSION found."
+    kill -INT $$
+fi
+
 # set tags that will resources remove using cloud scheduler
 if ! declare -p REMOVE_AFTER &> /dev/null; then
     if ! REMOVE_AFTER=$(date --date='+0 day' +%Y-%m-%d 2>/dev/null); then   # blank is do not delete

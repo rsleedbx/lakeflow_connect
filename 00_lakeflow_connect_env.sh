@@ -15,7 +15,12 @@ if [ -z "$BASH_VERSINFO" ]; then
 fi
 
 if (( ${BASH_VERSINFO[0]} < 4 )); then
-    echo "bash 4.0 or greater needed. $BASH_VERSION found."
+    echo "bash 4.0 or greater needed. $BASH_VERSION found. Run the following:"
+    echo ""
+    echo "brew install bash         # install bash"
+    echo "/opt/homebrew/bin/bash    # start bash"
+    echo ""
+    echo "run the command again"
     kill -INT $$
 fi
 

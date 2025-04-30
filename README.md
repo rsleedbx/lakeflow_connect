@@ -74,6 +74,7 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
 
    ```bash
    /opt/homebrew/bin/bash
+   # [ optional ] customize export commands here as required
    source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/00_lakeflow_connect_env.sh)
    ```
 

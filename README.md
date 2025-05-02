@@ -68,8 +68,8 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
    </details>
 
 
-2. Initialize environment variables in a new terminal session for a new database
-    [Customize](#frequently-used-environmental-variables) with `export` commands as required.
+2. Initialize environment variables in a new terminal session for a new database.
+[Customize](#frequently-used-environmental-variables) with `export` commands as required.
 
 
    ```bash
@@ -315,6 +315,19 @@ export DELETE_PIPELINES_AFTER_SLEEP=""
 . ./00_lakeflow_connect_env.sh
 ```
 
+
+## `DATABRICKS_CONFIG_PROFILE=DEFAULT`
+
+The default Databricks profile is `DEFAULT`.  Change to a different profile name.
+
+Example usage:
+
+Example usage of using `azure` profile name from `.databrickscfg` file.
+
+```bash
+export DATABRICKS_CONFIG_PROFILE="azure"
+. ./00_lakeflow_connect_env.sh
+```
 
 # Quick reference
 

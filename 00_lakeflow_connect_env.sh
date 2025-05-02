@@ -214,8 +214,8 @@ DBX() {
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
     PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
 
-    echo -n databricks "${PWMASK}"
-    databricks "$@" --output json >${DB_STDOUT} 2>${DB_STDERR}
+    echo -n "databricks ${PWMASK} ${DATABRICKS_CONFIG_PROFILE:+--profile $DATABRICKS_CONFIG_PROFILE}"
+    databricks "${@}" --output json ${DATABRICKS_CONFIG_PROFILE:+--profile $DATABRICKS_CONFIG_PROFILE} >${DB_STDOUT} 2>${DB_STDERR}
 
     RC=$?
     RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT

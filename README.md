@@ -67,13 +67,17 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
    4. open a new tab from a browser with URL http://localhost:7681/ ![](./resources/ttyd.png)
    </details>
 
+2. Use bash 4.0 or greater
+
+   ```bash
+   /opt/homebrew/bin/bash
+   ```
 
 2. Initialize environment variables in a new terminal session for a new database.
 [Customize](#frequently-used-environmental-variables) with `export` commands as required.
 
 
    ```bash
-   /opt/homebrew/bin/bash
    # [ optional ] customize export commands here as required
    source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/00_lakeflow_connect_env.sh)
    ```
@@ -143,11 +147,9 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
 
 4.  Start the Databricks Lakeflow Connect Database Demo
 
-
    ```bash
    source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/03_lakeflow_connect_demo.sh)
    ```
-
 
 # How to connect to the database using the native CLI
 

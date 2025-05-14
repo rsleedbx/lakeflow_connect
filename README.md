@@ -89,6 +89,16 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
    <details>
    <summary>SQL Server</summary>
 
+   <details>
+   <summary>SQL Server: AWS RDS SQL Server</summary>
+
+
+   ```bash
+   source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/01_aws_sqlserver.sh)
+   source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/02_sqlserver_configure.sh)
+   ```
+   </details>
+
 
    <details>
    <summary>SQL Server: Azure SQL Server</summary>

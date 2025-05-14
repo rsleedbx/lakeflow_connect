@@ -138,6 +138,41 @@ AZ() {
 }
 export -f AZ
 
+# display AWS commands
+AWS() {
+    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
+    # stdout and stderr file names
+    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/aws_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/aws_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local RC
+
+    PWMASK="$@"
+    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
+    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+    echo -n aws "${PWMASK}" --no-paginate --no-cli-pager ${AWS_CONFIG_PROFILE:+--profile $AWS_CONFIG_PROFILE}
+    aws "$@" --no-paginate --no-cli-pager ${AWS_CONFIG_PROFILE:+--profile $AWS_CONFIG_PROFILE} >${DB_STDOUT} 2>${DB_STDERR}
+
+    RC=$?
+    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
+    return $?
+}
+export -f AWS
+
+AWS_INIT() {
+    echo -e "aws init"
+    echo -e "-------\n"
+
+    if ! DB_EXIT_ON_ERROR="PRINT_RETURN" AWS sts get-caller-identity; then 
+        
+        echo "Run aws configure sso the first time to setup .aws/config"
+        echo "add [default] to .aws/config or export AWS_CONFIG_PROFILE"
+        echo "Run aws sso login after that login again"
+        kill -INT $$
+    fi
+}
+export -f AWS_INIT
+
 AZ_INIT() {
 
     echo -e "az init"
@@ -224,6 +259,44 @@ DBX() {
 export -f DBX
 
 SQLCMD() {
+    local DB_USERNAME=${DB_USERNAME:-${USER_USERNAME}}
+    local DB_PASSWORD=${DB_PASSWORD:-${USER_PASSWORD}}
+    local DB_HOST_FQDN=${DB_HOST_FQDN}
+    local DB_PORT=${DB_PORT:-${1433}}
+    local DB_CATALOG=${DB_CATALOG:-"master"}
+    local DB_LOGIN_TIMEOUT=${DB_LOGIN_TIMEOUT:-10}
+    local DB_URL=${DB_URL:-""}
+    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
+    # stdout and stderr file names
+    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/sqlcmd_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/sqlcmd_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+
+    PWMASK="${*}"
+    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
+    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+    PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
+    PWMASK="${PWMASK//$DBA_USERNAME/\$DBA_USERNAME}"
+    PWMASK="${PWMASK//$USER_USERNAME/\$USER_USERNAME}"
+    PWMASK="${PWMASK//$DB_CATALOG/\$DB_CATALOG}"
+
+    echo "sqlcmd -d '$DB_CATALOG' -S ${DB_HOST_FQDN},${DB_PORT} -U '${DBA_USERNAME}' -P \${DBA_PASSWORD} -C -l ${DB_LOGIN_TIMEOUT}"
+
+    if [[ -t 0 ]]; then
+        # stdin is attached
+        sqlcmd -d "$DB_CATALOG" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l "${DB_LOGIN_TIMEOUT}" "${@}"
+    else
+        # running in batch mode
+        sqlcmd -d "$DB_CATALOG" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l "${DB_LOGIN_TIMEOUT}" -h -1 "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
+    fi
+
+    RC=$?
+    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
+    return $?
+}
+export -f SQLCMD
+
+SQLCMD_OLD() {
     local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
     # stdout and stderr file names
     local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
@@ -343,8 +416,8 @@ export DB_BASENAME=${DB_BASENAME:-$(pwgen -1AB 16)}        # lower case, name se
 export CATALOG_BASENAME=${CATALOG_BASENAME:-$(pwgen -1AB 8)}
 
 # special char mess up eval and bash string substitution
-export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \[\]\!\=\~\^\$\;\(\)\:\.\*\@\\\>\`\"\'\| 32 )}"  # set if not defined
-export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \[\]\!\=\~\^\$\;\(\)\:\.\*\@\\\>\`\"\'\| 32 )}"  # set if not defined
+export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\<\>\`\"\'\| 32 )}"  # set if not defined
+export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\<\>\`\"\'\| 32 )}"  # set if not defined
 
 export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}}
 export DB_PORT=${DB_PORT:-""}
@@ -443,3 +516,20 @@ put_secrets() {
 export put_secrets
 
 # #############################################################################
+
+# should be overridden by the individual provider
+SQLCLI() {
+    echo "{@}"
+}
+export -f SQLCLI
+
+# can be left as is
+SQLCLI_DBA() {
+    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="" SQLCLI "${@}"
+}
+export -f SQLCLI_DBA
+
+SQLCLI_USER() {
+    DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" SQLCLI "${@}"
+}
+export -f SQLCLI_USER

@@ -9,20 +9,14 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
-export glcoud_database_version_ct=${glcoud_database_version:-SQLSERVER_2022_EXPRESS}
-export glcoud_database_version_both=${glcoud_database_version:-SQLSERVER_2022_ENTERPRISE}
-if [[ "${CDC_CT_MODE}" =~ ^(CT)$ ]]; then 
-    export GCLOUD_DB_TYPE=gt
-    export GCLOUD_DB_SUFFIX=gt
-else
-    export GCLOUD_DB_TYPE=gc
-    export GCLOUD_DB_SUFFIX=gc
-fi
+export glcoud_database_version_ct=${glcoud_database_version:-POSTGRES_15}
+export glcoud_database_version_both=${glcoud_database_version:-POSTGRES_15}
+export GCLOUD_DB_TYPE=gp
+export GCLOUD_DB_SUFFIX=gp
 export CONNECTION_TYPE=SQLSERVER
 export SOURCE_TYPE=$CONNECTION_TYPE
 
-DB_PORT=1433            # hardcoded by the cloud
-DBA_USERNAME=sqlserver  # hardcoded by the cloud
+DB_PORT=5432            # hardcoded by the cloud
 
 # auto set the connection name
 if [[ "${WHOAMI}" == "lfcddemo" ]] && [[ -z "${CONNECTION_NAME}" || "${CONNECTION_NAME}" != *"-${GCLOUD_DB_TYPE}" ]]; then
@@ -155,48 +149,18 @@ echo -e "\nCreate sql server if not exists\n"
 export DB_HOST_CREATED=""
 if ! GCLOUD sql instances describe ${DB_HOST}; then
 
-    if [[ "${CDC_CT_MODE}" =~ ^(CT)$  ]]; then 
-        GCLOUD sql instances create ${DB_HOST} \
+        DB_EXIT_ON_ERROR="PRINT_EXIT" GCLOUD sql instances create ${DB_HOST} \
         --tags "owner=${DBX_USERNAME}","${REMOVE_AFTER:+removeafter=${REMOVE_AFTER}}" \
         ${CLOUD_LOCATION:+"--zone=$CLOUD_LOCATION"} \
         --edition=enterprise \
-        --database-version=${glcoud_database_version_ct} \
+        --database-version=${glcoud_database_version_both} \
         --cpu=1 \
         --memory=4GB \
         --zone=us-central1-a \
         --root-password "${DBA_PASSWORD}" \
         --no-backup \
         --no-deletion-protection
-    else
-        if [[ ${glcoud_database_version_both} == "*STANDARD" ]]; then
-            GCLOUD sql instances create ${DB_HOST} \
-            --tags "owner=${DBX_USERNAME}","${REMOVE_AFTER:+removeafter=${REMOVE_AFTER}}" \
-            ${CLOUD_LOCATION:+"--zone=$CLOUD_LOCATION"} \
-            --edition=enterprise \
-            --database-version=${glcoud_database_version_both} \
-            --cpu=1 \
-            --memory=4GB \
-            --zone=us-central1-a \
-            --root-password "${DBA_PASSWORD}" \
-            --no-backup \
-            --no-deletion-protection
-        else
-            GCLOUD sql instances create ${DB_HOST} \
-            ${CLOUD_LOCATION:+"--zone=$CLOUD_LOCATION"} \
-            --tags "owner=${DBX_USERNAME}","${REMOVE_AFTER:+removeafter=${REMOVE_AFTER}}" \
-            --edition=enterprise \
-            --database-version=${glcoud_database_version_both} \
-            --cpu=2 \
-            --memory=8GB \
-            --zone=us-central1-a \
-            --root-password "${DBA_PASSWORD}" \
-            --no-backup \
-            --no-deletion-protection
-        fi
-        if [[ -b "$(cat /tmp/gcloud_stderr.$$ | grep ERROR)" ]]; then
-                cat /tmp/gcloud_stderr.$$
-                return 1
-        fi
+
     fi
     DB_HOST_CREATED="1"
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then

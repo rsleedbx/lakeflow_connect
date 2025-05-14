@@ -53,7 +53,7 @@ if ! AWS rds describe-db-instances \
     # db.m5.large
     # db.t3.large not supported
     DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds create-db-instance \
-        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
+        --tags "Key=Owner,Value=${DBX_USERNAME}" "${REMOVE_AFTER:+Key=RemoveAfter,Value=${REMOVE_AFTER}}" \
         --db-instance-identifier "$DB_HOST" \
         --db-instance-class db.m5.large \
         --engine sqlserver-se \
@@ -95,7 +95,7 @@ if ! AWS ec2 describe-security-groups \
     ; then
 
     DB_EXIT_ON_ERROR="PRINT_EXIT" AWS ec2 create-security-group \
-        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
+        --tags "Key=Owner,Value=${DBX_USERNAME}" "${REMOVE_AFTER:+Key=RemoveAfter,Value=${REMOVE_AFTER}}" \
         --description "security group for $DB_HOST" \
         --group-name "$DB_SG_NAME" \
         --vpc-id "$DB_VPC_ID" 

@@ -95,7 +95,7 @@ if ! AWS ec2 describe-security-groups \
     ; then
 
     DB_EXIT_ON_ERROR="PRINT_EXIT" AWS ec2 create-security-group \
-        --tags "Key=Owner,Value=${DBX_USERNAME}" "${REMOVE_AFTER:+Key=RemoveAfter,Value=${REMOVE_AFTER}}" \
+        --tag-specifications "ResourceType=security-group,Tags=[{Key=Owner,Value=${DBX_USERNAME}},${REMOVE_AFTER:+{Key=RemoveAfter,Value=${REMOVE_AFTER}}}]" \
         --description "security group for $DB_HOST" \
         --group-name "$DB_SG_NAME" \
         --vpc-id "$DB_VPC_ID" 

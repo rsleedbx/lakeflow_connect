@@ -150,6 +150,18 @@ Copy and paste the commands in a terminal window to [install CLI (one time or up
    source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/postgres/02_postgres_configure.sh)
    ```
    </details> 
+
+
+   <details>
+   <summary>Postgres: AWS RDS Postgres</summary>
+
+
+   ```bash
+   source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/postgres/01_aws_postgres.sh)
+   source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/postgres/02_postgres_configure.sh)
+   ```
+   </details> 
+
    </details Postgres> 
 
 

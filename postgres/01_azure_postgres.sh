@@ -266,7 +266,7 @@ if ! grep -q "^$DB_CATALOG" /tmp/psql_stdout.$$; then
 fi
 
 # #############################################################################
-# create catalog if not exists 
+# set replication
 
 echo -e "\nEnable wal_level=logical and require_secure_transport=off" 
 echo -e   "---------------------------------------------------------\n"

@@ -150,8 +150,8 @@ AWS() {
     PWMASK="$@"
     PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
-    echo -n aws "${PWMASK}" --no-paginate --no-cli-pager ${AWS_CONFIG_PROFILE:+--profile $AWS_CONFIG_PROFILE}
-    aws "$@" --no-paginate --no-cli-pager ${AWS_CONFIG_PROFILE:+--profile $AWS_CONFIG_PROFILE} >${DB_STDOUT} 2>${DB_STDERR}
+    echo -n aws "${PWMASK}" --no-cli-pager ${AWS_CONFIG_PROFILE:+--profile $AWS_CONFIG_PROFILE}
+    aws "$@" --no-cli-pager ${AWS_CONFIG_PROFILE:+--profile $AWS_CONFIG_PROFILE} >${DB_STDOUT} 2>${DB_STDERR}
 
     RC=$?
     RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
@@ -416,8 +416,8 @@ export DB_BASENAME=${DB_BASENAME:-$(pwgen -1AB 16)}        # lower case, name se
 export CATALOG_BASENAME=${CATALOG_BASENAME:-$(pwgen -1AB 8)}
 
 # special char mess up eval and bash string substitution
-export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\<\>\`\"\'\| 32 )}"  # set if not defined
-export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\<\>\`\"\'\| 32 )}"  # set if not defined
+export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
+export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
 
 export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}}
 export DB_PORT=${DB_PORT:-""}
@@ -437,12 +437,12 @@ test_user_catalog_connect() {
 }
 
 test_db_connect() {
-    local dba_username=$1
-    local dba_password=$2
-    local db_host_fqdn=$3
-    local db_port=$4
-    local db_catalog=$5
-    local timeout=${6:-5}
+    local dba_username=${1:-$DB_USERNAME}
+    local dba_password=${2:-$DB_PASSWORD}
+    local db_host_fqdn=${3:-$DB_HOST_FQDN}
+    local db_port=${4:-$DB_PORT}
+    local db_catalog=${5:-$DB_CATALOG}
+    local timeout=${6:-${DB_LOGIN_TIMEOUT:-5}}
 
     echo "select 1" | sqlcmd -l "${timeout}" -d "$db_catalog" -S ${db_host_fqdn},${db_port} -U "${dba_username}" -P "${dba_password}" -C >/tmp/select1_stdout.$$ 2>/tmp/select1_stderr.$$
     if [[ $? == 0 ]]; then 

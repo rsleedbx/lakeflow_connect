@@ -10,18 +10,55 @@ if [ "$0" == "$BASH_SOURCE" ]; then
 fi
 
 # #############################################################################
+# dml generator for postgres
+
+# make sure to quote echo "$sql_dml_generator" otherwise the newline will be removed 
+export sql_dml_generator=${sql_dml_generator:-""}
+if [[ -z "$sql_dml_generator" ]]; then 
+echo "using default sql_dml_generator.  echo \"\$sql_dml_generator\" to view" 
+sql_dml_generator='
+set search_path='${DB_SCHEMA}';
+do $$
+declare 
+    counter integer := 0;
+begin
+    while counter >= 0 loop
+        -- intpk
+        insert into intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
+        commit;
+        delete from intpk where pk=(select min(pk) from intpk);
+        commit;
+        update intpk set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from intpk);
+        commit;
+        -- dtix
+        insert into dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
+        commit;
+        -- wait
+		raise notice '"'Counter %'"', counter;
+	    counter := counter + 1;
+        perform pg_sleep(1);
+    end loop;
+end;
+$$;
+'
+fi
+
+# #############################################################################
 
 # connect to master catalog
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" test_db_connect
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" TEST_DB_CONNECT
 
 # #############################################################################
 # create user login.  user by default = role + login
 
 if [[ -z "$USER_USERNAME" || "$USER_USERNAME" == "$USER_BASENAME" ]]; then
-    DB_CATALOG="postgres" SQLCLI_DBA -c "select usename from pg_user where usename not in ('azuresu', 'replication')" </dev/null
+    DB_CATALOG="postgres" SQLCLI_DBA -c "select usename from pg_user where usename not in ('azuresu', 'rdsadmin', 'replication')" </dev/null
     if grep -q -v -m 1 "^${DBA_USERNAME}$" /tmp/psql_stdout.$$; then 
         USER_USERNAME=$(grep -v -m 1 "^${DBA_USERNAME}$" /tmp/psql_stdout.$$)
         echo "Retrieving USER_USERNAME=$USER_USERNAME"
+    else
+        USER_USERNAME="$USER_BASENAME"
+        echo "Setting USER_USERNAME=$USER_BASENAME"
     fi
 fi
 
@@ -34,18 +71,21 @@ end \$\$;
 alter user ${USER_USERNAME} with password '${USER_PASSWORD}';
 grant connect on database ${DB_CATALOG} to ${USER_USERNAME};
 grant all privileges on database ${DB_CATALOG} to ${USER_USERNAME};
+-- works on azure postgres flexible server
 alter role $USER_USERNAME with replication;
+-- works on aws rds postgres
+grant rds_replication to $USER_USERNAME;
 select 1;
 EOF
 
 # connect to postgres as a user
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PASSWORD" DB_CATALOG="postgres" test_db_connect
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PASSWORD" DB_CATALOG="postgres" TEST_DB_CONNECT
 
 # #############################################################################
 # create user in the catalog
 
 # connect to $DB_CATALOG as a user
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PASSWORD" DB_CATALOG="$DB_CATALOG" test_db_connect
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PASSWORD" DB_CATALOG="$DB_CATALOG" TEST_DB_CONNECT
 
 # #############################################################################
 

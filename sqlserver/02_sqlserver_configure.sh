@@ -307,3 +307,9 @@ else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 
 fi
 
+# #############################################################################
+
+echo -e "Run the lakeflow connect steps:
+
+source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/03_lakeflow_connect_demo.sh)
+"

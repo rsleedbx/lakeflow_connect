@@ -192,3 +192,10 @@ else
         SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.intpk replica identity nothing;"
     fi
 fi
+
+# #############################################################################
+
+echo -e "Run the lakeflow connect steps:
+
+source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/03_lakeflow_connect_demo.sh)
+"

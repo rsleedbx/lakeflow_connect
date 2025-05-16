@@ -176,7 +176,7 @@ if ! AWS rds describe-db-parameter-groups \
 fi
 
 DB_PARAMS_CHANGED=""
-AWS rds describe-db-parameters \
+ DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds describe-db-parameters \
     --db-parameter-group-name "$DB_PARM_GRP_NAME" \
     --query "Parameters[?ParameterName=='rds.logical_replication' || ParameterName=='rds.force_ssl']"
 
@@ -198,6 +198,10 @@ DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds modify-db-parameter-group \
     --parameters '[
     {"ParameterName":"rds.force_ssl",           "ParameterValue":"off", "ApplyMethod": "pending-reboot"}
 ]'
+    (( DB_PARAMS_CHANGED += 1 ))
+fi
+
+if [[ "$DBParameterGroupName" != "$DB_PARM_GRP_NAME" ]]; then
     (( DB_PARAMS_CHANGED += 1 ))
 fi
 

@@ -15,7 +15,7 @@ Open a terminal on Mac OSX and install the following tools.
 
     ```bash
     brew tap microsoft/mssql-release
-    brew install pwgen ipcalc ttyd tmux mssql-tools mysql-client libpq bash
+    brew install pwgen ipcalc ttyd tmux mssql-tools mysql-client libpq bash wget
     brew link --force libpq
     ```
 3. [Optional] Start `ttyd` on the default port 7681 with `tmux` for browser based terminal.  To test, go to http://localhost:7681

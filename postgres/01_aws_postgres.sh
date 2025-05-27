@@ -250,6 +250,19 @@ if [[ -n $DB_PARAMS_CHANGED || -n $DB_SG_ID_CHANGED ]]; then
 fi
 
 # #############################################################################
+# reinit firewall if empty 
+
+
+DB_EXIT_ON_ERROR="PRINT_EXIT" AWS ec2 describe-security-groups \
+    --group-name "$DB_SG_NAME"
+
+DB_SG_RULE_LEN=$(jq -r '.. | objects | select(.FromPort=='$DB_PORT' and .ToPort=='$DB_PORT') | .IpRanges | length' /tmp/aws_stdout.$$)
+
+if (( DB_SG_RULE_LEN == 0 )); then
+    firewall_rule
+fi
+
+# #############################################################################
 # create catalog if not exists 
 
 echo -e "\nCreate catalog if not exists" 
@@ -271,3 +284,12 @@ fi
 if ! grep -q "^$DB_CATALOG" /tmp/psql_stdout.$$; then
     DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="postgres" SQLCLI_DBA -c "create database ${DB_CATALOG};"
 fi
+
+# #############################################################################
+
+echo -e "\n
+Run the following step:
+-----------------------
+
+source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/postgres/02_postgres_configure.sh)
+"

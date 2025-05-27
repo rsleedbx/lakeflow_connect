@@ -166,8 +166,8 @@ AWS_INIT() {
     if ! DB_EXIT_ON_ERROR="PRINT_RETURN" AWS sts get-caller-identity; then 
         
         echo "Run aws configure sso the first time to setup .aws/config"
-        echo "add [default] to .aws/config or export AWS_CONFIG_PROFILE"
-        echo "Run aws sso login after that login again"
+        echo "add [default] to .aws/config or export AWS_CONFIG_PROFILE=profile name"
+        echo "Run aws sso login after that to login again"
         kill -INT $$
     fi
 }

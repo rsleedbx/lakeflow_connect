@@ -195,7 +195,9 @@ fi
 
 # #############################################################################
 
-echo -e "Run the lakeflow connect steps:
+echo -e "\n
+Run the following steps:
+------------------------
 
 source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/03_lakeflow_connect_demo.sh)
 "

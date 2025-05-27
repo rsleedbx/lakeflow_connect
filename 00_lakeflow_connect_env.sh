@@ -17,8 +17,9 @@ fi
 if (( ${BASH_VERSINFO[0]} < 4 )); then
     echo "bash 4.0 or greater needed. $BASH_VERSION found. Run the following:"
     echo ""
-    echo "brew install bash         # install bash"
-    echo "/opt/homebrew/bin/bash    # start bash"
+    echo "brew install bash                     # install bash"
+    echo "/opt/homebrew/bin/bash                # start bash"
+    echo "export PATH=/opt/homebrew/bin:$PATH   # set PATH"
     echo ""
     echo "run the command again"
     kill -INT $$
@@ -533,3 +534,18 @@ SQLCLI_USER() {
     DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" SQLCLI "${@}"
 }
 export -f SQLCLI_USER
+
+# #############################################################################
+
+# make sure executables are there are with correct versions
+
+for exe in curl ipcalc pwgen ttyd tmux wget; do
+    if ! command -v $exe &> /dev/null; then
+    echo -e "\n
+        wget command does not exist.  please install via the following and rerun.
+
+        brew install $exe                      # install $exe
+        export PATH=/opt/homebrew/bin:\$PATH   # set PATH
+    "
+    fi
+done

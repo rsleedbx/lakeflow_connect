@@ -90,6 +90,16 @@ echo -e   "------------------------------------------------\n"
 
 DB_SG_NAME="${WHOAMI}-1433-sg"
 
+firewall_rule() {
+    printf -v DB_FIREWALL_CIDRS_CSV "{CidrIp='%s'}," "${DB_FIREWALL_CIDRS[@]}"
+    DB_FIREWALL_CIDRS_CSV="${DB_FIREWALL_CIDRS_CSV%,}"  # remove trailing ,
+
+    # https://docs.aws.amazon.com/cli/latest/reference/ec2/authorize-security-group-ingress.html
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AWS ec2 authorize-security-group-ingress \
+        --group-name "$DB_SG_NAME" \
+        --ip-permissions "IpProtocol=tcp,IpRanges=[$DB_FIREWALL_CIDRS_CSV],FromPort=$DB_PORT,ToPort=$DB_PORT"     
+}
+
 if ! AWS ec2 describe-security-groups \
     --group-name "$DB_SG_NAME" \
     ; then
@@ -100,13 +110,7 @@ if ! AWS ec2 describe-security-groups \
         --group-name "$DB_SG_NAME" \
         --vpc-id "$DB_VPC_ID" 
 
-    printf -v DB_FIREWALL_CIDRS_CSV "{CidrIp='%s'}," "${DB_FIREWALL_CIDRS[@]}"
-    DB_FIREWALL_CIDRS_CSV="${DB_FIREWALL_CIDRS_CSV%,}"  # remove trailing ,
-
-    # https://docs.aws.amazon.com/cli/latest/reference/ec2/authorize-security-group-ingress.html
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AWS ec2 authorize-security-group-ingress \
-        --group-name "$DB_SG_NAME" \
-        --ip-permissions "IpProtocol=tcp,IpRanges=[$DB_FIREWALL_CIDRS_CSV],FromPort=$DB_PORT,ToPort=$DB_PORT" 
+    firewall_rule
 
     AWS ec2 describe-security-groups \
         --group-name "$DB_SG_NAME" 
@@ -127,19 +131,38 @@ AWS rds modify-db-instance \
     --vpc-security-group-ids "$DB_SG_ID" 
 
 # #############################################################################
+# reinit firewall if empty 
+
+DB_EXIT_ON_ERROR="PRINT_EXIT" AWS ec2 describe-security-groups \
+    --group-name "$DB_SG_NAME"
+
+DB_SG_RULE_LEN=$(jq -r '.. | objects | select(.FromPort=='$DB_PORT' and .ToPort=='$DB_PORT') | .IpRanges | length' /tmp/aws_stdout.$$)
+
+if (( DB_SG_RULE_LEN == 0 )); then
+    firewall_rule
+fi
+
+# #############################################################################
 # create catalog if not exists 
 
 echo -e "\nCreate catalog if not exists\n" 
 
 SQLCMD -d "master" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" \
-    -C -l 10 -h -1 -l 60 -Q "set nocount on; SELECT name FROM master.sys.databases WHERE name = N'${DB_CATALOG}';"
+    -C -l 10 -h -1 -l 60 -Q "set nocount on; SELECT name FROM master.sys.databases WHERE name = N'${DB_CATALOG}';" </dev/null
 if [[ ! -s /tmp/sqlcmd_stdout.$$ && ! -s /tmp/sqlcmd_stderr.$$ ]]; then
     SQLCMD -d "master" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" \
-        -C -l 10 -h -1 -Q "create database [${DB_CATALOG}];"
+        -C -l 10 -h -1 -Q "create database [${DB_CATALOG}];"  </dev/null
     if [[ -s /tmp/sqlcmd_stdout.$$ || -s /tmp/sqlcmd_stderr.$$ ]]; then
         cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
         return 1
     fi
 fi
 
-kill -INT $$
+# #############################################################################
+
+echo -e "\n
+Run the following step:
+-----------------------
+
+source  <(curl -s -L https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/02_sqlserver_configure.sh)
+"

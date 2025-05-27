@@ -539,7 +539,7 @@ export -f SQLCLI_USER
 
 # make sure executables are there are with correct versions
 
-for exe in ipcalc pwgen ttyd tmux wget; do
+for exe in curl ipcalc pwgen ttyd tmux wget; do
     if ! command -v $exe &> /dev/null; then
     echo -e "\n
         wget command does not exist.  please install via the following and rerun.

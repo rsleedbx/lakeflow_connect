@@ -143,7 +143,8 @@ case "${CDC_CT_MODE}" in
 echo "enabling replication on the schema"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
-"continuous": "true",
+"continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
+"development": "true",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
   "source_type": "'"$SOURCE_TYPE"'",
@@ -167,7 +168,7 @@ fi
 echo "enabling replication on the intpk table"
 if ! DBX pipelines create --json '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
-"continuous": "true",
+"continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "true",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
@@ -190,7 +191,7 @@ fi
 echo "enabling replication on the dtix table"
 if ! DBX pipelines create --json '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
-"continuous": "true",
+"continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "true",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",

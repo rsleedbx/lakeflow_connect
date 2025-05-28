@@ -243,10 +243,10 @@ fi
 echo -e "\nCreate Ingestion Pipeline Trigger Jobs"
 echo -e   "--------------------------------------\n"
 
-
+# 3 minutes past hour, run every 5 minutes
 if ! DBX jobs create --json '{
 "name":"'"$INGESTION_PIPELINE_NAME"'",
-"schedule":{"timezone_id":"UTC", "quartz_cron_expression": "0 5/30 * * * ?"},
+"schedule":{"timezone_id":"UTC", "quartz_cron_expression": "0 3/5 * * * ?"},
 "tasks":[ {
     "task_key":"run_dlt", 
     "pipeline_task":{"pipeline_id":"'"$INGESTION_PIPELINE_ID"'"} } ]

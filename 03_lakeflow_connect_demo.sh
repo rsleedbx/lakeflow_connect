@@ -219,10 +219,6 @@ esac
 INGESTION_PIPELINE_ID=$(jq -r '.pipeline_id' /tmp/dbx_stdout.$$)
 export INGESTION_PIPELINE_ID
 
-INGESTION_PIPELINE_CONTINUOUS=$(jq -r '.spec.continuous' /tmp/dbx_stdout.$$)
-export INGESTION_PIPELINE_CONTINUOUS
-
-
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
     nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
 fi

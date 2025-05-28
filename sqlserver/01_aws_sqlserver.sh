@@ -73,6 +73,7 @@ if ! AWS rds describe-db-instances \
         nohup sleep "${DELETE_DB_AFTER_SLEEP}" && \
             AWS rds delete-db-instance \
             --db-instance-identifier "$DB_HOST" \
+            --skip-final-snapshot \
             >> ~/nohup.out 2>&1 &
         echo -e "\nDeleting ${DB_HOST} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi

@@ -418,8 +418,8 @@ export DB_BASENAME=${DB_BASENAME:-$(pwgen -1AB 16)}        # lower case, name se
 export CATALOG_BASENAME=${CATALOG_BASENAME:-$(pwgen -1AB 8)}
 
 # special char mess up eval and bash string substitution
-export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
-export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
+export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \-\[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
+export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \-\[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
 
 export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}}
 export DB_PORT=${DB_PORT:-""}

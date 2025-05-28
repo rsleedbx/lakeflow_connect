@@ -385,7 +385,7 @@ export DATABRICKS_CONFIG_PROFILE="azure"
 4. Ctrl + `b` + `"` to split the current pane horizontally.
 4. Ctrl + `b` + `x` to close the current pane.
 
-### Lakeflow Pipeline commands
+# Lakeflow Pipeline commands
 
 To perform a full refresh of a table.
 

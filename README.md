@@ -387,7 +387,7 @@ export DATABRICKS_CONFIG_PROFILE="azure"
 
 ### Lakeflow Pipeline commands
 
-To perform a full refresh a table.
+To perform a full refresh of a table.
 
 - select a table to refresh and start the pipeline
 ```

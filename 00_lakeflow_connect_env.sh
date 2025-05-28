@@ -91,6 +91,7 @@ export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
 
 # ingestion pipeline options
 export SCD_TYPE=${SCD_TYPE:-""} # SCD_TYPE_1 | SCD_TYPE_2
+export INGESTION_PIPELINE_CONTINUOUS=${INGESTION_PIPELINE_CONTINUOUS:-false}
 
 # call using 
 # RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
@@ -417,8 +418,8 @@ export DB_BASENAME=${DB_BASENAME:-$(pwgen -1AB 16)}        # lower case, name se
 export CATALOG_BASENAME=${CATALOG_BASENAME:-$(pwgen -1AB 8)}
 
 # special char mess up eval and bash string substitution
-export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
-export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
+export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \-\[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
+export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \-\[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
 
 export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}}
 export DB_PORT=${DB_PORT:-""}

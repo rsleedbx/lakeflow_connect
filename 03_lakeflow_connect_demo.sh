@@ -143,7 +143,8 @@ case "${CDC_CT_MODE}" in
 echo "enabling replication on the schema"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
-"continuous": "true",
+"continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
+"development": "true",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
   "source_type": "'"$SOURCE_TYPE"'",
@@ -167,7 +168,7 @@ fi
 echo "enabling replication on the intpk table"
 if ! DBX pipelines create --json '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
-"continuous": "true",
+"continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "true",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
@@ -190,7 +191,7 @@ fi
 echo "enabling replication on the dtix table"
 if ! DBX pipelines create --json '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
-"continuous": "true",
+"continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "true",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
@@ -218,10 +219,6 @@ esac
 INGESTION_PIPELINE_ID=$(jq -r '.pipeline_id' /tmp/dbx_stdout.$$)
 export INGESTION_PIPELINE_ID
 
-INGESTION_PIPELINE_CONTINUOUS=$(jq -r '.spec.continuous' /tmp/dbx_stdout.$$)
-export INGESTION_PIPELINE_CONTINUOUS
-
-
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
     nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
 fi
@@ -242,10 +239,10 @@ fi
 echo -e "\nCreate Ingestion Pipeline Trigger Jobs"
 echo -e   "--------------------------------------\n"
 
-
+# 3 minutes past hour, run every 5 minutes
 if ! DBX jobs create --json '{
 "name":"'"$INGESTION_PIPELINE_NAME"'",
-"schedule":{"timezone_id":"UTC", "quartz_cron_expression": "0 5/30 * * * ?"},
+"schedule":{"timezone_id":"UTC", "quartz_cron_expression": "0 3/5 * * * ?"},
 "tasks":[ {
     "task_key":"run_dlt", 
     "pipeline_task":{"pipeline_id":"'"$INGESTION_PIPELINE_ID"'"} } ]

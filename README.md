@@ -385,3 +385,16 @@ export DATABRICKS_CONFIG_PROFILE="azure"
 4. Ctrl + `b` + `"` to split the current pane horizontally.
 4. Ctrl + `b` + `x` to close the current pane.
 
+### Lakeflow Pipeline commands
+
+To perform a full refresh a table.
+
+- select a table to refresh and start the pipeline
+```
+databricks api post /api/2.0/pipelines/$INGESTION_PIPELINE_ID/updates --json '{
+      "full_refresh":false,
+      "full_refresh_selection":[
+         "intpk"
+      ]
+}'
+```

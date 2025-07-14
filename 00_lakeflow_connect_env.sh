@@ -36,6 +36,22 @@ if ! declare -p REMOVE_AFTER &> /dev/null; then
     export REMOVE_AFTER
 fi
 
+if ! declare -p DML_INTERVAL_SEC &> /dev/null; then
+export DML_INTERVAL_SEC=${DML_INTERVAL_SEC:-01}             # >= 0, 0=no DML
+fi
+
+if ! declare -p PIPELINE_DEV_MODE &> /dev/null; then
+export PIPELINE_DEV_MODE=${PIPELINE_DEV_MODE:-"false"}          # true | false
+fi
+
+if ! declare -p INITIAL_SNAPSHOT_ROWS &> /dev/null; then
+export INITIAL_SNAPSHOT_ROWS=${INITIAL_SNAPSHOT_ROWS:-"1"}      # >= 0, 0=no initial data
+fi
+
+if ! declare -p JOBS_PERFORMANCE_MODE &> /dev/null; then
+export JOBS_PERFORMANCE_MODE=${JOBS_PERFORMANCE_MODE:-"STANDARD"}      # PERFORMANCE_OPTIMIZED | STANDARD
+fi
+
 # stop after sleep
 if ! declare -p STOP_AFTER_SLEEP &> /dev/null; then
 export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"127m"}      # blank is do not stop
@@ -92,6 +108,11 @@ export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
 # ingestion pipeline options
 export SCD_TYPE=${SCD_TYPE:-""} # SCD_TYPE_1 | SCD_TYPE_2
 export INGESTION_PIPELINE_CONTINUOUS=${INGESTION_PIPELINE_CONTINUOUS:-false}
+export INGESTION_PIPELINE_MIN_TRIGGER=${INGESTION_PIPELINE_MIN_TRIGGER:-5}
+
+if [[ "$INGESTION_PIPELINE_CONTINUOUS" != "false" ]]; then
+    INGESTION_PIPELINE_MIN_TRIGGER=0
+fi
 
 # call using 
 # RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT

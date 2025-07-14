@@ -9,6 +9,40 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   return 1
 fi
 
+if [[ "$DML_INTERVAL_SEC" -eq 0 ]] && [[ "${DB_SCHEMA}" != *"_${DML_INTERVAL_SEC}tps"* ]]; then
+    DB_SCHEMA="${DB_SCHEMA}_${DML_INTERVAL_SEC}tps"
+    echo "Changing schema to $DB_SCHEMA"
+fi
+
+if [[ "$INITIAL_SNAPSHOT_ROWS" -eq 0 ]] && [[ "${DB_SCHEMA}" != *"_${INITIAL_SNAPSHOT_ROWS}row"* ]]; then
+    DB_SCHEMA="${DB_SCHEMA}_${INITIAL_SNAPSHOT_ROWS}row"
+    echo "Changing schema to $DB_SCHEMA"
+fi
+
+# #############################################################################
+# dml generator
+
+# make sure to quote echo "$sql_dml_generator" otherwise the newline will be removed 
+
+if ! declare -p sql_dml_generator &> /dev/null; then
+echo "using default sql_dml_generator.  echo \"\$sql_dml_generator\" to view" 
+sql_dml_generator="
+while ( 1 = 1 )
+begin
+IF OBJECT_ID(N'${DB_SCHEMA}.intpk', N'U') IS NOT NULL
+    begin
+    insert into [${DB_SCHEMA}].[intpk] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
+    delete from [${DB_SCHEMA}].[intpk] where pk=(select min(pk) from [${DB_SCHEMA}].[intpk])
+    update [${DB_SCHEMA}].[intpk] set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from [${DB_SCHEMA}].[intpk])
+    end
+IF OBJECT_ID(N'${DB_SCHEMA}.dtix', N'U') IS NOT NULL
+    insert into [${DB_SCHEMA}].[dtix] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)
+WAITFOR DELAY '00:00:${DML_INTERVAL_SEC}'
+end
+go
+"
+fi
+
 db_replication_cleanup() {
     local GATEWAY_PIPELINE_ID=${1:${GATEWAY_PIPELINE_ID}}
     echo "db clean up after pipeline stop $GATEWAY_PIPELINE_ID"    
@@ -245,6 +279,7 @@ create table [${DB_SCHEMA}].[dtix] (dt datetime)
 go
 EOF
 
+if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
 cat <<EOF | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
 IF OBJECT_ID(N'${DB_SCHEMA}.intpk', N'U') IS NOT NULL
     insert into [${DB_SCHEMA}].[intpk] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
@@ -261,6 +296,7 @@ else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 echo -e "SET NOCOUNT ON\ngo\n select top 1 dt from [${DB_SCHEMA}].[dtix]" | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -h -1 >/tmp/select_stdout.$$ 2>/tmp/select_stderr.$$
 if [[ -s /tmp/select_stdout.$$ ]]; then echo "table dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
+fi
 
 # #############################################################################
 
@@ -289,8 +325,6 @@ fi
 if [[ "${CDC_CT_MODE}" =~ ^(BOTH|CDC)$  ]]; then 
 
 cat <<EOF | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
-create table [${DB_SCHEMA}].[dtix] (dt datetime)
-go
 EXEC sys.sp_cdc_enable_table @source_schema = N'${DB_SCHEMA}', @source_name = N'dtix', @role_name = NULL, @supports_net_changes = 0
 go
 EOF

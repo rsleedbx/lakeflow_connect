@@ -25,8 +25,8 @@ if [[ -z "$CONNECTION_NAME" ]]; then
     CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr [.@] _)
 fi
 export CONNECTION_NAME
-export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${INGESTION_PIPELINE_MIN_TRIGGER}TRIG_${JOBS_PERFORMANCE_MODE:0:4}PRMD_${PIPELINE_DEV_MODE:0:4}DVMD_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_GW
-export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${INGESTION_PIPELINE_MIN_TRIGGER}TRIG_${JOBS_PERFORMANCE_MODE:0:4}PRMD_${PIPELINE_DEV_MODE:0:4}DVMD_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_IG
+export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE}GDN_${GATEWAY_WORKER_NODE}GWN_${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_GW
+export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_DRIVER_NODE}GDN_${GATEWAY_WORKER_NODE}GWN_${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_IG
 # used for the pipelines
 export TARGET_CATALOG="main"
 export TARGET_SCHEMA=${WHOAMI}_${NINE_CHAR_ID}
@@ -112,18 +112,24 @@ echo -e   "-----------------------\n"
 
 GATEWAY_EVENT_LOG="event_log_${GATEWAY_PIPELINE_NAME}"
 
-if ! DBX pipelines create --json '{
+if ! DBX pipelines create --json "$(echo '{
 "name": "'"$GATEWAY_PIPELINE_NAME"'",
 "clusters": [
-  {"label": "updates", "spark_conf": {"gateway.logging.level": "DEBUG"}}
+  {"label": "updates", 
+    "spark_conf": {"gateway.logging.level": "DEBUG"}
+    '$([[ -n "$GATEWAY_DRIVER_NODE" ]] && echo ",\"driver_node_type_id\": \"${GATEWAY_DRIVER_NODE}\"")'
+    '$([[ -n "$GATEWAY_WORKER_NODE" ]] && echo ",\"node_type_id\": \"${GATEWAY_WORKER_NODE}\"")'
+    '$([[ -n "$GATEWAY_MIN_WORKERS" && -n "$GATEWAY_MAX_WORKERS" ]] && echo ",\"autoscale\": { \"min_workers\": $GATEWAY_MIN_WORKERS, \"max_workers\": $GATEWAY_MAX_WORKERS}")'
+  }
 ],
+"continuous": "'"$GATEWAY_PIPELINE_CONTINUOUS"'",
 "gateway_definition": {
   "connection_id": "'"$CONNECTION_ID"'",
   "gateway_storage_catalog": "'"$STAGING_CATALOG"'",
   "gateway_storage_schema": "'"$STAGING_SCHEMA"'",
   "gateway_storage_name": "'"$GATEWAY_PIPELINE_NAME"'" 
   }
-}'; then
+}')"; then
     cat /tmp/dbx_stderr.$$
     return 1
 fi

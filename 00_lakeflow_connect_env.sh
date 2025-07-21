@@ -36,6 +36,24 @@ if ! declare -p REMOVE_AFTER &> /dev/null; then
     export REMOVE_AFTER
 fi
 
+if ! declare -p GATEWAY_DRIVER_NODE &> /dev/null; then
+export GATEWAY_DRIVER_NODE=${GATEWAY_DRIVER_NODE:-""}       # r5.xlarge (4 cores), r5.2xlarge (8cores)
+fi
+
+if ! declare -p GATEWAY_WORKER_NODE &> /dev/null; then
+export GATEWAY_WORKER_NODE=${GATEWAY_WORKER_NODE:-""}       # r5.xlarge (4 cores), r5.2xlarge (8cores)
+fi
+
+if ! declare -p GATEWAY_MIN_WORKERS &> /dev/null; then
+export GATEWAY_MIN_WORKERS=${GATEWAY_MIN_WORKERS:-0}       # 1 = default 
+fi
+
+if ! declare -p GATEWAY_MAX_WORKERS &> /dev/null; then
+export GATEWAY_MAX_WORKERS=${GATEWAY_MAX_WORKERS:-0}       # 5 = default
+fi
+
+export GATEWAY_PIPELINE_CONTINUOUS=${GATEWAY_PIPELINE_CONTINUOUS:-"true"}   # cannot be false
+
 if ! declare -p DML_INTERVAL_SEC &> /dev/null; then
 export DML_INTERVAL_SEC=${DML_INTERVAL_SEC:-01}             # >= 0, 0=no DML
 fi

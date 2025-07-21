@@ -9,12 +9,21 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   return 1
 fi
 
+if [[ "$DML_INTERVAL_SEC" -eq 0 ]] && [[ "${DB_SCHEMA}" != *"_${DML_INTERVAL_SEC}tps"* ]]; then
+    DB_SCHEMA="${DB_SCHEMA}_${DML_INTERVAL_SEC}tps"
+    echo "Changing schema to $DB_SCHEMA"
+fi
+
+if [[ "$INITIAL_SNAPSHOT_ROWS" -eq 0 ]] && [[ "${DB_SCHEMA}" != *"_${INITIAL_SNAPSHOT_ROWS}row"* ]]; then
+    DB_SCHEMA="${DB_SCHEMA}_${INITIAL_SNAPSHOT_ROWS}row"
+    echo "Changing schema to $DB_SCHEMA"
+fi
+
 # #############################################################################
 # dml generator for postgres
 
 # make sure to quote echo "$sql_dml_generator" otherwise the newline will be removed 
-export sql_dml_generator=${sql_dml_generator:-""}
-if [[ -z "$sql_dml_generator" ]]; then 
+if ! declare -p sql_dml_generator &> /dev/null; then
 echo "using default sql_dml_generator.  echo \"\$sql_dml_generator\" to view" 
 sql_dml_generator='
 set search_path='${DB_SCHEMA}';
@@ -36,7 +45,7 @@ begin
         -- wait
 		raise notice '"'Counter %'"', counter;
 	    counter := counter + 1;
-        perform pg_sleep(1);
+        perform pg_sleep('${DML_INTERVAL_SEC}');
     end loop;
 end;
 $$;
@@ -138,6 +147,10 @@ fi
 DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
     create table if not exists ${DB_SCHEMA}.intpk (pk serial primary key, dt timestamp);
     create table if not exists ${DB_SCHEMA}.dtix (dt timestamp);
+EOF
+
+if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
+DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
     insert into ${DB_SCHEMA}.intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
     insert into ${DB_SCHEMA}.dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
     select '${DB_SCHEMA}.intpk',max(pk) from ${DB_SCHEMA}.intpk;
@@ -151,6 +164,7 @@ else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
 # .\+ = one or more so that nulls are not accepted
 if grep "^${DB_SCHEMA}.dtix,.\+$" /tmp/psql_stdout.$$ ; then echo "table dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
+fi
 
 # #############################################################################
 

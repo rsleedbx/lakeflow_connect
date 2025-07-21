@@ -398,3 +398,11 @@ databricks api post /api/2.0/pipelines/$INGESTION_PIPELINE_ID/updates --json '{
       ]
 }'
 ```
+
+# Bash command
+
+- kill jobs that delete the pipeline
+
+```
+kill $(jobs -l | grep "pipelines delete" | awk '{print $2}') ```
+```

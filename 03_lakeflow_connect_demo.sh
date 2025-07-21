@@ -25,8 +25,8 @@ if [[ -z "$CONNECTION_NAME" ]]; then
     CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr [.@] _)
 fi
 export CONNECTION_NAME
-export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_GW
-export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_IG
+export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE}GDN_${GATEWAY_WORKER_NODE}GWN_${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_GW
+export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE}GDN_${GATEWAY_WORKER_NODE}GWN_${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_IG
 # used for the pipelines
 export TARGET_CATALOG="main"
 export TARGET_SCHEMA=${WHOAMI}_${NINE_CHAR_ID}
@@ -110,15 +110,26 @@ export CONNECTION_ID
 echo -e "\nCreate Gateway Pipeline"
 echo -e   "-----------------------\n"
 
-if ! DBX pipelines create --json '{
+GATEWAY_EVENT_LOG="event_log_${GATEWAY_PIPELINE_NAME}"
+
+if ! DBX pipelines create --json "$(echo '{
 "name": "'"$GATEWAY_PIPELINE_NAME"'",
+"clusters": [
+  {"label": "updates", 
+    "spark_conf": {"gateway.logging.level": "DEBUG"}
+    '$([[ -n "$GATEWAY_DRIVER_NODE" ]] && echo ",\"driver_node_type_id\": \"${GATEWAY_DRIVER_NODE}\"")'
+    '$([[ -n "$GATEWAY_WORKER_NODE" ]] && echo ",\"node_type_id\": \"${GATEWAY_WORKER_NODE}\"")'
+    '$([[ -n "$GATEWAY_MIN_WORKERS" && -n "$GATEWAY_MAX_WORKERS" ]] && echo ",\"autoscale\": { \"min_workers\": $GATEWAY_MIN_WORKERS, \"max_workers\": $GATEWAY_MAX_WORKERS}")'
+  }
+],
+"continuous": "'"$GATEWAY_PIPELINE_CONTINUOUS"'",
 "gateway_definition": {
   "connection_id": "'"$CONNECTION_ID"'",
   "gateway_storage_catalog": "'"$STAGING_CATALOG"'",
   "gateway_storage_schema": "'"$STAGING_SCHEMA"'",
-  "gateway_storage_name": "'"$GATEWAY_PIPELINE_NAME"'"
+  "gateway_storage_name": "'"$GATEWAY_PIPELINE_NAME"'" 
   }
-}'; then
+}')"; then
     cat /tmp/dbx_stderr.$$
     return 1
 fi
@@ -138,13 +149,15 @@ fi
 echo -e "\nCreate Ingestion Pipeline"
 echo -e   "-------------------------\n"
 
+INGESTION_EVENT_LOG="event_log_${INGESTION_PIPELINE_NAME}"
+
 case "${CDC_CT_MODE}" in 
 "BOTH"|"NONE") 
 echo "enabling replication on the schema"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
-"development": "true",
+"development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
   "source_type": "'"$SOURCE_TYPE"'",
@@ -169,7 +182,7 @@ echo "enabling replication on the intpk table"
 if ! DBX pipelines create --json '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
-"development": "true",
+"development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
   "objects": [
@@ -192,7 +205,7 @@ echo "enabling replication on the dtix table"
 if ! DBX pipelines create --json '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
-"development": "true",
+"development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
   "objects": [
@@ -239,10 +252,13 @@ fi
 echo -e "\nCreate Ingestion Pipeline Trigger Jobs"
 echo -e   "--------------------------------------\n"
 
+JOBS_START_MIN_PAST_HOUR="$(( ( RANDOM % 5 ) + 1 ))"
+
 # 3 minutes past hour, run every 5 minutes
 if ! DBX jobs create --json '{
 "name":"'"$INGESTION_PIPELINE_NAME"'",
-"schedule":{"timezone_id":"UTC", "quartz_cron_expression": "0 3/5 * * * ?"},
+"performance_target": "'"$JOBS_PERFORMANCE_MODE"'",
+"schedule":{"timezone_id":"UTC", "quartz_cron_expression": "0 '$JOBS_START_MIN_PAST_HOUR'/'$INGESTION_PIPELINE_MIN_TRIGGER' * * * ?"},
 "tasks":[ {
     "task_key":"run_dlt", 
     "pipeline_task":{"pipeline_id":"'"$INGESTION_PIPELINE_ID"'"} } ]
@@ -280,28 +296,14 @@ if ! DBX permissions update jobs      "$INGESTION_JOB_ID"      --json "$jobs_pip
 echo -e "\n Start workload"
 echo -e   "---------------\n"
 
-if ! declare -p sql_dml_generator &> /dev/null; then
-sql_dml_generator="
-while ( 1 = 1 )
-begin
-IF OBJECT_ID(N'${DB_SCHEMA}.intpk', N'U') IS NOT NULL
-    begin
-    insert into [${DB_SCHEMA}].[intpk] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
-    delete from [${DB_SCHEMA}].[intpk] where pk=(select min(pk) from [${DB_SCHEMA}].[intpk])
-    update [${DB_SCHEMA}].[intpk] set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from [${DB_SCHEMA}].[intpk])
-    end
-IF OBJECT_ID(N'${DB_SCHEMA}.dtix', N'U') IS NOT NULL
-    insert into [${DB_SCHEMA}].[dtix] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)
-WAITFOR DELAY '00:00:01'
-end
-go
-"
-    nohup sqlcmd -d "${DB_CATALOG}" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 -e >/dev/null 2>&1 <<< $(echo "$sql_dml_generator") &
-else
+if [[ ! -z "$sql_dml_generator" ]] && [[ $DML_INTERVAL_SEC -gt 0 ]]; then
     SQLCLI >/dev/null 2>&1 <<< $(echo "$sql_dml_generator") &
+    export LOAD_GENERATOR_PID=$!
+else
+    export LOAD_GENERATOR_PID=""
 fi
 
-export LOAD_GENERATOR_PID=$!
+if [[ ! -z "$LOAD_GENERATOR_PID" ]]; then
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
     nohup sleep "${STOP_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
 fi
@@ -310,6 +312,7 @@ if [[ -z "${STOP_AFTER_SLEEP}" ]] && [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]];
 fi
 echo "Load Generator: started with PID=$LOAD_GENERATOR_PID."
 echo ""
+fi
 
 # #############################################################################
 

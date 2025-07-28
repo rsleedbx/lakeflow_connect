@@ -11,8 +11,8 @@ fi
 
 export glcoud_database_version_ct=${glcoud_database_version:-POSTGRES_15}
 export glcoud_database_version_both=${glcoud_database_version:-POSTGRES_15}
-export GCLOUD_DB_TYPE=gp
-export GCLOUD_DB_SUFFIX=gp
+export GCLOUD_DB_TYPE=gcp-pg
+export GCLOUD_DB_SUFFIX=gcp-pg
 export CONNECTION_TYPE=SQLSERVER
 export SOURCE_TYPE=$CONNECTION_TYPE
 

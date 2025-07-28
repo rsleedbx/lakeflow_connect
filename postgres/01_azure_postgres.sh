@@ -9,8 +9,8 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
-export DB_TYPE=zp
-export DB_SUFFIX=zp
+export DB_TYPE=azure-pg
+export DB_SUFFIX=azure-pg
 export CONNECTION_TYPE=POSTGRESQL
 export SOURCE_TYPE=$CONNECTION_TYPE
 
@@ -174,15 +174,18 @@ echo -e   "------------------------------------\n"
 
 export DB_HOST_CREATED=""
 if ! AZ postgres flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
+
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ provider register --wait --namespace Microsoft.DBforPostgreSQL
+
     # sql server create does not support tags
     DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
         --database "${DB_CATALOG}" \
-        --create-default-database Disabled \
+        --create-default-database Enabled \
+        --version 17 \
         --node-count 1 \
         --public-access Enabled \
         --storage-size 32 \
-        --version 16 \
         --tier Burstable \
         --sku-name Standard_B1ms \
         --admin-user "${DBA_USERNAME}" \

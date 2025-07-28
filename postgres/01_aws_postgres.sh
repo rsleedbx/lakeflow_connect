@@ -10,8 +10,8 @@ if [ "$0" == "$BASH_SOURCE" ]; then
 fi
 
 export PG_VERSION=${PG_VERSION:-""}     # take the default
-export CLOUD_DB_TYPE=wp
-export CLOUD_DB_SUFFIX=wp
+export CLOUD_DB_TYPE=aws-pg
+export CLOUD_DB_SUFFIX=aws-pg
 export CONNECTION_TYPE=POSTGRESQL
 export SOURCE_TYPE=$CONNECTION_TYPE
 

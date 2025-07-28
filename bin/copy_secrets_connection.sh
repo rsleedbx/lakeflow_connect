@@ -81,6 +81,7 @@ copy_secrets_connection() {
     local DBX_PROFILE_TOS="${2:-""}"
     local SECRETS_SCOPE="${3:-lfcddemo}"
     local SECRETS_KEYS="${4:-""}"
+    local DATABRICKS_CONFIG_PROFILE=""  # override DBX usage of this flag
 
     # set destination dbx profiles
     if [[ -z "${DBX_PROFILE_TOS[*]}" ]]; then

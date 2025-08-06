@@ -107,16 +107,30 @@ export CONNECTION_ID
 
 # #############################################################################
 
+if [[ -n "$REMOVE_AFTER" ]]; then
+REMOVE_AFTER_TAG='
+, "tags": {
+    "RemoveAfter": "'"$REMOVE_AFTER"'"
+}'
+else
+REMOVE_AFTER_TAG=''
+fi
+
+# #############################################################################
+
 echo -e "\nCreate Gateway Pipeline"
 echo -e   "-----------------------\n"
 
 GATEWAY_EVENT_LOG="event_log_${GATEWAY_PIPELINE_NAME}"
+
 
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$GATEWAY_PIPELINE_NAME"'",
 "clusters": [
   {"label": "updates", 
     "spark_conf": {"gateway.logging.level": "DEBUG"}
+    '$([[ -n "$GATEWAY_DRIVER_POOL" ]] && echo ",\"driver_instance_pool_id\": \"${GATEWAY_DRIVER_POOL}\"")'
+    '$([[ -n "$GATEWAY_WORKER_POOL" ]] && echo ",\"instance_pool_id\": \"${GATEWAY_WORKER_POOL}\"")'
     '$([[ -n "$GATEWAY_DRIVER_NODE" ]] && echo ",\"driver_node_type_id\": \"${GATEWAY_DRIVER_NODE}\"")'
     '$([[ -n "$GATEWAY_WORKER_NODE" ]] && echo ",\"node_type_id\": \"${GATEWAY_WORKER_NODE}\"")'
     '$([[ -n "$GATEWAY_MIN_WORKERS" && -n "$GATEWAY_MAX_WORKERS" ]] && echo ",\"autoscale\": { \"min_workers\": $GATEWAY_MIN_WORKERS, \"max_workers\": $GATEWAY_MAX_WORKERS}")'
@@ -128,7 +142,8 @@ if ! DBX pipelines create --json "$(echo '{
   "gateway_storage_catalog": "'"$STAGING_CATALOG"'",
   "gateway_storage_schema": "'"$STAGING_SCHEMA"'",
   "gateway_storage_name": "'"$GATEWAY_PIPELINE_NAME"'" 
-  }
+}
+'$REMOVE_AFTER_TAG'
 }')"; then
     cat /tmp/dbx_stderr.$$
     return 1
@@ -172,6 +187,7 @@ if ! DBX pipelines create --json "$(echo '{
         }}}
     ]
   }
+'$REMOVE_AFTER_TAG'
 }')"; then
     cat /tmp/dbx_stderr.$$
     return 1
@@ -179,7 +195,7 @@ fi
 ;;
 "CT") 
 echo "enabling replication on the intpk table"
-if ! DBX pipelines create --json '{
+if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",
@@ -195,15 +211,17 @@ if ! DBX pipelines create --json '{
         }}
     ]
   }
-}'; then
+'$REMOVE_AFTER_TAG'
+}')"    ; then
     cat /tmp/dbx_stderr.$$
     return 1
 fi
 ;;
 "CDC") 
 echo "enabling replication on the dtix table"
-if ! DBX pipelines create --json '{
+if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
+"performance_target": "'"$JOBS_PERFORMANCE_MODE"'",
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
@@ -218,7 +236,8 @@ if ! DBX pipelines create --json '{
         }}
     ]
   }
-}'; then
+'$REMOVE_AFTER_TAG'
+}')"; then
     cat /tmp/dbx_stderr.$$
     return 1
 fi
@@ -255,14 +274,17 @@ echo -e   "--------------------------------------\n"
 JOBS_START_MIN_PAST_HOUR="$(( ( RANDOM % 5 ) + 1 ))"
 
 # 3 minutes past hour, run every 5 minutes
-if ! DBX jobs create --json '{
+if ! DBX jobs create --json "$(echo '{
 "name":"'"$INGESTION_PIPELINE_NAME"'",
 "performance_target": "'"$JOBS_PERFORMANCE_MODE"'",
-"schedule":{"timezone_id":"UTC", "quartz_cron_expression": "0 '$JOBS_START_MIN_PAST_HOUR'/'$INGESTION_PIPELINE_MIN_TRIGGER' * * * ?"},
-"tasks":[ {
+"schedule": {"timezone_id":"UTC", "quartz_cron_expression": "0 '$JOBS_START_MIN_PAST_HOUR'/'$INGESTION_PIPELINE_MIN_TRIGGER' * * * ?"},
+"tasks": [ {
     "task_key":"run_dlt", 
-    "pipeline_task":{"pipeline_id":"'"$INGESTION_PIPELINE_ID"'"} } ]
-}'; then
+    "pipeline_task":{"pipeline_id":"'"$INGESTION_PIPELINE_ID"'"} 
+  } 
+]
+'$REMOVE_AFTER_TAG'
+}')"; then
     cat /tmp/dbx_stderr.$$
     return 1    
 fi

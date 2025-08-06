@@ -178,7 +178,7 @@ fi
 DB_PARAMS_CHANGED=""
  DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds describe-db-parameters \
     --db-parameter-group-name "$DB_PARM_GRP_NAME" \
-    --query "Parameters[?ParameterName=='rds.logical_replication' || ParameterName=='rds.force_ssl' || ParameterName=='max_replication_slots' || ParameterName=='max_wal_senders' || ParameterName=='max_worker_processes']"
+    --query "Parameters[?ParameterName=='rds.logical_replication' || ParameterName=='rds.force_ssl']"
 
 if [[ "1" != "$(jq -r '.[] | select(.ParameterName=="rds.logical_replication") | .ParameterValue' /tmp/aws_stdout.$$)" ]]; then
     DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds modify-db-parameter-group \

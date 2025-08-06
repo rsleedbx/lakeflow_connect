@@ -37,19 +37,27 @@ if ! declare -p REMOVE_AFTER &> /dev/null; then
 fi
 
 if ! declare -p GATEWAY_DRIVER_NODE &> /dev/null; then
-export GATEWAY_DRIVER_NODE=${GATEWAY_DRIVER_NODE:-""}       # r5.xlarge (4 cores), r5.2xlarge (8cores)
+export GATEWAY_DRIVER_NODE=${GATEWAY_DRIVER_NODE:-""}       # m5.xlarge (4 cores), m5.2xlarge (8cores), m-fleet.large, m-fleet.xlarge, m-fleet.2xlarge 
 fi
 
 if ! declare -p GATEWAY_WORKER_NODE &> /dev/null; then
-export GATEWAY_WORKER_NODE=${GATEWAY_WORKER_NODE:-""}       # r5.xlarge (4 cores), r5.2xlarge (8cores)
+export GATEWAY_WORKER_NODE=${GATEWAY_WORKER_NODE:-""}       # m5.xlarge (4 cores), m5.2xlarge (8cores)
 fi
 
 if ! declare -p GATEWAY_MIN_WORKERS &> /dev/null; then
-export GATEWAY_MIN_WORKERS=${GATEWAY_MIN_WORKERS:-0}       # 1 = default 
+export GATEWAY_MIN_WORKERS=${GATEWAY_MIN_WORKERS:-""}       # 1 = default 
 fi
 
-if ! declare -p GATEWAY_MAX_WORKERS &> /dev/null; then
-export GATEWAY_MAX_WORKERS=${GATEWAY_MAX_WORKERS:-0}       # 5 = default
+if ! declare -p GATEWAY_DRIVER_POOL &> /dev/null; then
+export GATEWAY_MAX_WORKERS=${GATEWAY_MAX_WORKERS:-""}       # 5 = default
+fi
+
+if ! declare -p GATEWAY_DRIVER_POOL &> /dev/null; then
+export GATEWAY_DRIVER_POOL=${GATEWAY_DRIVER_POOL:-""}        
+fi
+
+if ! declare -p GATEWAY_WORKER_POOL &> /dev/null; then
+export GATEWAY_WORKER_POOL=${GATEWAY_WORKER_POOL:-""}       
 fi
 
 export GATEWAY_PIPELINE_CONTINUOUS=${GATEWAY_PIPELINE_CONTINUOUS:-"true"}   # cannot be false

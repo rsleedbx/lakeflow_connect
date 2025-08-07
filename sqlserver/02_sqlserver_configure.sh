@@ -227,24 +227,30 @@ esac
 
 # enable schema evolution
 
+echo "enabling schema evolution"
+
 case "${CDC_CT_MODE}" in 
 "BOTH"|"CDC") 
     if [[ -f ./ddl_support_objects.sql ]]; then
+    echo "using ./ddl_support_objects.sql"
     cat ./ddl_support_objects.sql | \
     sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
     sqlcmd -d "${DB_CATALOG}" -S ${DB_HOST_FQDN},${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60 
     else
-    wget -qO- https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/ddl_support_objects.sql | \
+    echo "downloading ./ddl_support_objects.sql"
+    wget -qO- https://docs.databricks.com/aws/en/assets/files/ddl_support_objects-079edd908cf2ef08ca9bdd0f34f068b4.sql | \
     sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
     sqlcmd -d "${DB_CATALOG}" -S ${DB_HOST_FQDN},${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60 
     fi
     ;;
 "CT") 
     if [[ -f ./ddl_support_objects_ct_only.sql ]]; then
+    echo "using ./ddl_support_objects_ct_only.sql"
     cat ./ddl_support_objects_ct_only.sql | \
     sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
     sqlcmd -d "${DB_CATALOG}" -S ${DB_HOST_FQDN},${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60 
     else
+    echo "downloading ./ddl_support_objects.sql"
     wget -qO- https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/ddl_support_objects_ct_only.sql | \
     sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
     sqlcmd -d "${DB_CATALOG}" -S ${DB_HOST_FQDN},${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60 
@@ -255,6 +261,8 @@ case "${CDC_CT_MODE}" in
     return 1
     ;;
 esac
+
+echo "enabled schema evolution"
 
 # #############################################################################
 

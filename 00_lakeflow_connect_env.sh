@@ -533,6 +533,7 @@ get_secrets() {
     local secrets_key=${1:-"key_value"}
     if DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets get-secret "${SECRETS_SCOPE}" "${secrets_key}"; then
         v="$(jq -r '.value | @base64d' /tmp/dbx_stdout.$$)"
+        CONNECTION_TYPE=""  # backward compat.  CONNECTION_TYPE="" when not present for SQLSERVER
         if [[ -n $v ]]; then 
             eval "$v"
             SECRETS_RETRIEVED=1 
@@ -555,7 +556,7 @@ put_secrets() {
             cat /tmp/dbx_stderr.$$; return 1;
         fi
     fi
-    for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
+    for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD CONNECTION_TYPE; do
         key_value="export ${k}='${!k}';$key_value"
     done
     if ! DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets put-secret "${SECRETS_SCOPE}" "${secrets_key}" --string-value "$key_value"; then

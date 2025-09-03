@@ -273,11 +273,19 @@ echo -e   "--------------------------------------\n"
 
 JOBS_START_MIN_PAST_HOUR="$(( ( RANDOM % 5 ) + 1 ))"
 
+if (( INGESTION_PIPELINE_MIN_TRIGGER >= 60 )); then
+    CRON_MIN_TRIGGER='0'
+    CRON_HRS_TRIGGER=$(( INGESTION_PIPELINE_MIN_TRIGGER / 60 ))
+else
+    CRON_MIN_TRIGGER="$INGESTION_PIPELINE_MIN_TRIGGER"
+    CRON_HRS_TRIGGER='*'
+fi
+
 # 3 minutes past hour, run every 5 minutes
 if ! DBX jobs create --json "$(echo '{
 "name":"'"$INGESTION_PIPELINE_NAME"'",
 "performance_target": "'"$JOBS_PERFORMANCE_MODE"'",
-"schedule": {"timezone_id":"UTC", "quartz_cron_expression": "0 '$JOBS_START_MIN_PAST_HOUR'/'$INGESTION_PIPELINE_MIN_TRIGGER' * * * ?"},
+"schedule": {"timezone_id":"UTC", "quartz_cron_expression": "0 '$JOBS_START_MIN_PAST_HOUR'/'$CRON_MIN_TRIGGER' '$CRON_HRS_TRIGGER' * * ?"},
 "tasks": [ {
     "task_key":"run_dlt", 
     "pipeline_task":{"pipeline_id":"'"$INGESTION_PIPELINE_ID"'"} 

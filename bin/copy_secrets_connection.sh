@@ -21,7 +21,7 @@ connection_set_all_read() {
 # allow all users to READ
 secrets_set_all_read() {
     local DBX_PROFILE_TO=$1
-    local SECRETS_SCOPE=$2
+    local SECRETS_SCOPE=$2    
     DBX --profile "$DBX_PROFILE_TO" secrets put-acl "${SECRETS_SCOPE}" users READ
 }
 
@@ -43,30 +43,29 @@ secrets_copy() {
 
 # create connections at DBX_PROFILE_TO
 connection_create() {
-    local DBX_PROFILE_TO=$1
-    local CONNECTION_NAME=$2
-
     # create the connection
-    local create_json='{
-    "name": "'"$CONNECTION_NAME"'",
-    "connection_type": "SQLSERVER",
-    "options": {
-            "host": "'"$DB_HOST_FQDN"'",
-            "port": "'"$DB_PORT"'",
-            "trustServerCertificate": "true",
-            "user": "'"$USER_USERNAME"'",
-            "password": "'"${USER_PASSWORD}"'"
+    local create_json="$(echo '{
+        "name": "'"$CONNECTION_NAME"'",
+        "connection_type": "'"$CONNECTION_TYPE"'",
+        "comment": "'"CDC_CT_MODE=${CDC_CT_MODE}"'",
+        "options": {
+        "host": "'"$DB_HOST_FQDN"'",
+        "port": "'"$DB_PORT"'",
+        '$(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then printf '"trustServerCertificate": "true",'; fi)'
+        "user": "'"$USER_USERNAME"'",
+        "password": "'"${USER_PASSWORD}"'"
         }
-    }'
-    local update_json='{
-    "options": {
-            "host": "'"$DB_HOST_FQDN"'",
-            "port": "'"$DB_PORT"'",
-            "trustServerCertificate": "true",
-            "user": "'"$USER_USERNAME"'",
-            "password": "'"${USER_PASSWORD}"'"
+    }')"
+
+    local update_json="$(echo '{
+        "options": {
+        "host": "'"$DB_HOST_FQDN"'",
+        "port": "'"$DB_PORT"'",
+        '$(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then echo "\"trustServerCertificate\": \"true\",";fi)'
+        "user": "'"$USER_USERNAME"'",
+        "password": "'"${USER_PASSWORD}"'"
         }
-    }'
+    }')"
 
     if ! DBX --profile "$DBX_PROFILE_TO" connections get "$CONNECTION_NAME"; then
         if ! DBX --profile "$DBX_PROFILE_TO" api post /api/2.1/unity-catalog/connections --json "$create_json"; then cat /tmp/dbx_stdout.$$ /tmp/dbx_stderr.$$; return 1; fi
@@ -77,10 +76,12 @@ connection_create() {
 }
 
 copy_secrets_connection() {
-    local DBX_PROFILE_FROM="${1:-DEFAULT}"
-    local DBX_PROFILE_TOS="${2:-""}"
-    local SECRETS_SCOPE="${3:-lfcddemo}"
-    local SECRETS_KEYS="${4:-""}"
+    local DBX_PROFILE_FROM="${DBX_PROFILE_FROM:-DEFAULT}"
+    local DBX_PROFILE_TOS="${DBX_PROFILE_TOS:-""}"
+    local SECRETS_SCOPE="${SECRETS_SCOPE:-lfcddemo}"
+    local SECRETS_KEYS="${SECRETS_KEYS:-""}"
+    local DB_SUFFIX="${DB_SUFFIX:-azure-pg}"
+    local CONNECTION_TYPE="${CONNECTION_TYPE:-SQLSERVER}"
     local DATABRICKS_CONFIG_PROFILE=""  # override DBX usage of this flag
 
     # set destination dbx profiles
@@ -98,19 +99,34 @@ copy_secrets_connection() {
     declare -p SECRETS_KEYS
 
     for PRTO in "${DBX_PROFILE_TOS[@]}"; do
+        
+        # make the secret scope read all
+        secrets_set_all_read "$DBX_PROFILE_FROM" "$SECRETS_SCOPE"
+
+        if [[ "$PRTO" == "$DBX_PROFILE_FROM" ]]; then continue; fi
+
         # copy each secret
-        echo -e "\n$PRTO"
+        echo -e "\n$PRTO workspace"
         for SK in "${SECRETS_KEYS[@]}"; do
             secrets_copy "$DBX_PROFILE_FROM" "$PRTO" "$SECRETS_SCOPE" "$SK"
             SK_SUFFIXS=(${SK//-/ })   # replace - with spaces the empty char and get the last element 
-            SK_SUFFIX=${SK_SUFFIXS[-1]}
 
-            connection_set_all_read "$DBX_PROFILE_FROM" "${SECRETS_SCOPE}-${SK_SUFFIX}"
-            connection_create "$PRTO" "${SECRETS_SCOPE}-${SK_SUFFIX}"
-            
+            # get all elements except the first element
+            separator="-"
+            # Create a delimited string with a trailing separator
+            printf -v temp_string "%s${separator}" "${SK_SUFFIXS[@]:1}"
+            # Remove the trailing separator
+            SK_SUFFIX="${temp_string%"$separator"}"
+
+            local DBX_PROFILE_TO="$PRTO"
+            local CONNECTION_NAME="$SECRETS_SCOPE-$SK_SUFFIX"   
+
+            echo "${DBX_PROFILE_FROM}" ${DBX_PROFILE_TOS} ${SECRETS_SCOPE}" ${SECRETS_KEYS}" ${SK_SUFFIX}" ${CONNECTION_TYPE} ${CONNECTION_NAME}"
+
+            connection_create 
+            connection_set_all_read "$DBX_PROFILE_TOS" "$CONNECTION_NAME"
+            break
         done
-        # make the secret scope read all
-        secrets_set_all_read "$DBX_PROFILE_FROM" "$SECRETS_SCOPE"
         secrets_set_all_read "$PRTO" "$SECRETS_SCOPE"
     
     done

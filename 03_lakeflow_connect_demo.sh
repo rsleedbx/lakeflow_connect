@@ -201,6 +201,7 @@ if ! DBX pipelines create --json "$(echo '{
 "development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
+  "source_type": "'"$SOURCE_TYPE"'",
   "objects": [
      {"table": {
         "source_catalog": "'"$DB_CATALOG"'",
@@ -226,6 +227,7 @@ if ! DBX pipelines create --json "$(echo '{
 "development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
+  "source_type": "'"$SOURCE_TYPE"'",
   "objects": [
      {"table": {
         "source_catalog": "'"$DB_CATALOG"'",

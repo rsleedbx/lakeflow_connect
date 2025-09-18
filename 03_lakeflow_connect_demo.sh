@@ -25,8 +25,12 @@ if [[ -z "$CONNECTION_NAME" ]]; then
     CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr [.@] _)
 fi
 export CONNECTION_NAME
-export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE:+${GATEWAY_DRIVER_NODE}GDN_}${GATEWAY_WORKER_NODE:+${GATEWAY_WORKER_NODE}GWN_}${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_GW
-export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE:+${GATEWAY_DRIVER_NODE}GDN_}${GATEWAY_WORKER_NODE:+${GATEWAY_WORKER_NODE}GWN_}${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_IG
+# long name
+#export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE:+${GATEWAY_DRIVER_NODE}GDN_}${GATEWAY_WORKER_NODE:+${GATEWAY_WORKER_NODE}GWN_}${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_GW
+#export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE:+${GATEWAY_DRIVER_NODE}GDN_}${GATEWAY_WORKER_NODE:+${GATEWAY_WORKER_NODE}GWN_}${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_IG
+# short name
+export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_GW
+export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_IG
 # used for the pipelines
 export TARGET_CATALOG="main"
 export TARGET_SCHEMA=${WHOAMI}_${NINE_CHAR_ID}
@@ -123,9 +127,13 @@ echo -e   "-----------------------\n"
 
 GATEWAY_EVENT_LOG="event_log_${GATEWAY_PIPELINE_NAME}"
 
-
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$GATEWAY_PIPELINE_NAME"'",
+"event_log": {
+    "catalog": "'"$TARGET_CATALOG"'",
+    "schema": "'"$TARGET_SCHEMA"'",
+    "name": "event_log_gateway"
+}, 
 "clusters": [
   {"label": "updates", 
     "spark_conf": {"gateway.logging.level": "DEBUG"}
@@ -171,6 +179,11 @@ case "${CDC_CT_MODE}" in
 echo "enabling replication on the schema"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
+"event_log": {
+    "catalog": "'"$TARGET_CATALOG"'",
+    "schema": "'"$TARGET_SCHEMA"'",
+    "name": "event_log_ingestion"
+}, 
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
@@ -197,6 +210,11 @@ fi
 echo "enabling replication on the intpk table"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
+"event_log": {
+    "catalog": "'"$TARGET_CATALOG"'",
+    "schema": "'"$TARGET_SCHEMA"'",
+    "name": "event_log_ingestion"
+}, 
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
@@ -222,6 +240,11 @@ fi
 echo "enabling replication on the dtix table"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
+"event_log": {
+    "catalog": "'"$TARGET_CATALOG"'",
+    "schema": "'"$TARGET_SCHEMA"'",
+    "name": "event_log_ingestion"
+},
 "performance_target": "'"$JOBS_PERFORMANCE_MODE"'",
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",

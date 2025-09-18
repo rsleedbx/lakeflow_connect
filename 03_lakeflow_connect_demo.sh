@@ -129,11 +129,7 @@ GATEWAY_EVENT_LOG="event_log_${GATEWAY_PIPELINE_NAME}"
 
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$GATEWAY_PIPELINE_NAME"'",
-"event_log": {
-    "catalog": "'"$TARGET_CATALOG"'",
-    "schema": "'"$TARGET_SCHEMA"'",
-    "name": "event_log_gateway"
-}, 
+'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$TARGET_CATALOG\",\"schema\": \"$TARGET_SCHEMA\",\"name\": \"event_log_ingestion\"},"}'
 "clusters": [
   {"label": "updates", 
     "spark_conf": {"gateway.logging.level": "DEBUG"}
@@ -179,11 +175,7 @@ case "${CDC_CT_MODE}" in
 echo "enabling replication on the schema"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
-"event_log": {
-    "catalog": "'"$TARGET_CATALOG"'",
-    "schema": "'"$TARGET_SCHEMA"'",
-    "name": "event_log_ingestion"
-}, 
+'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$TARGET_CATALOG\",\"schema\": \"$TARGET_SCHEMA\",\"name\": \"event_log_ingestion\"},"}' 
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
@@ -210,11 +202,7 @@ fi
 echo "enabling replication on the intpk table"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
-"event_log": {
-    "catalog": "'"$TARGET_CATALOG"'",
-    "schema": "'"$TARGET_SCHEMA"'",
-    "name": "event_log_ingestion"
-}, 
+'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$TARGET_CATALOG\",\"schema\": \"$TARGET_SCHEMA\",\"name\": \"event_log_ingestion\"},"}' 
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
@@ -240,11 +228,7 @@ fi
 echo "enabling replication on the dtix table"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
-"event_log": {
-    "catalog": "'"$TARGET_CATALOG"'",
-    "schema": "'"$TARGET_SCHEMA"'",
-    "name": "event_log_ingestion"
-},
+'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$TARGET_CATALOG\",\"schema\": \"$TARGET_SCHEMA\",\"name\": \"event_log_ingestion\"},"}' 
 "performance_target": "'"$JOBS_PERFORMANCE_MODE"'",
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",

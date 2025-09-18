@@ -36,6 +36,10 @@ if ! declare -p REMOVE_AFTER &> /dev/null; then
     export REMOVE_AFTER
 fi
 
+if ! declare -p PUBLISH_EVENT_LOG &> /dev/null; then
+export PUBLISH_EVENT_LOG=${PUBLISH_EVENT_LOG:-""}            # don't publish (not supported yet ) 
+fi
+
 if ! declare -p GATEWAY_DRIVER_NODE &> /dev/null; then
 export GATEWAY_DRIVER_NODE=${GATEWAY_DRIVER_NODE:-""}       # m5.xlarge (4 cores), m5.2xlarge (8cores), m-fleet.large, m-fleet.xlarge, m-fleet.2xlarge 
 fi
@@ -468,7 +472,7 @@ export CATALOG_BASENAME=${CATALOG_BASENAME:-$(pwgen -1AB 8)}
 export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \-\[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
 export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \-\[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
 
-export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}_demokit}
+export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}_lfcddemo}
 export DB_PORT=${DB_PORT:-""}
 export SECRETS_SCOPE=${SECRETS_SCOPE:-${WHOAMI}}
 

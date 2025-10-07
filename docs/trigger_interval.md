@@ -15,17 +15,16 @@ load the data
 only the first pipeline creates CDC, the rest do not
 
 ```
-export STOP_AFTER_SLEEP=''
-export DELETE_DB_AFTER_SLEEP=''
-export STOP_AFTER_SLEEP='480m'
-export DELETE_PIPELINES_AFTER_SLEEP='480m'
+export DELETE_DB_AFTER_SLEEP='480m'
+export STOP_AFTER_SLEEP='300m'
+export DELETE_PIPELINES_AFTER_SLEEP='300m'
 . ./00_lakeflow_connect_env.sh
 . ./sqlserver/01_azure_sqlserver.sh 
 . ./sqlserver/02_sqlserver_configure.sh 
 
 
-for interval in 120; do # 3 5 15 30 60 120; do
-  echo "INGESTION_PIPELINE_MIN_TRIGGER=$interval ingestion pipelline trigger"
+for interval in 3 5 15 30 60 120; do
+  echo "INGESTION_PIPELINE_MIN_TRIGGER=$interval ingestion pipeline trigger"
   export INGESTION_PIPELINE_MIN_TRIGGER=$interval
 
   if [[ "$interval" == "3" ]]; then

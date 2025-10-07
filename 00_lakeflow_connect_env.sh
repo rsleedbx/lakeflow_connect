@@ -421,6 +421,53 @@ PSQL() {
 }
 export -f PSQL
  
+MYSQLCLI() {
+    local DB_USERNAME=${DB_USERNAME:-${USER_USERNAME}}
+    local DB_PASSWORD=${DB_PASSWORD:-${USER_PASSWORD}}
+    local DB_HOST_FQDN=${DB_HOST_FQDN}
+    local DB_PORT=${DB_PORT:-${1433}}
+    local DB_CATALOG=${DB_CATALOG:-"mysql"}
+    local DB_LOGIN_TIMEOUT=${DB_LOGIN_TIMEOUT:-10}
+    local DB_SSLMODE=${DB_SSLMODE:-"allow"}
+    local DB_URL=${DB_URL:-""}
+    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
+    # stdout and stderr file names
+    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/mysql_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/mysql_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_URL
+    if [[ -z $DB_URL ]]; then
+        DB_URL="--user ${DB_USERNAME} --host ${DB_HOST_FQDN} --port ${DB_PORT} --database ${DB_CATALOG}"
+    fi
+
+    PWMASK="${*}"
+    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
+    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+
+    if [[ $DB_PASSWORD == $DBA_PASSWORD ]]; then
+        echo "MYSQL_PWD=\$DBA_PASSWORD mysql ${DB_URL} ${PWMASK}" 
+    elif [[ $DB_PASSWORD == $USER_PASSWORD ]]; then
+        echo "MYSQL_PWD=\$USER_PASSWORD mysql ${DB_URL} ${PWMASK}" 
+    else
+        echo "mysql ${DB_URL} ${PWMASK}"     
+    fi
+
+    export MYSQL_PWD=$DB_PASSWORD
+    if [[ -t 0 ]]; then
+        # stdin is attached
+        mysql ${DB_URL} "${@}" 
+    else
+        # running in batch mode
+        mysql ${DB_URL} --batch --skip-column-names --silent "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
+    fi
+
+    RC=$?
+    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
+    return $?
+}
+export -f MYSQLCLI
+
+
 export WHOAMI_USERNAME=${WHOAMI_USERNAME:-$(whoami)}
 export WHOAMI="$(echo "$WHOAMI_USERNAME" | tr -d '\-\.\_')"
 
@@ -433,6 +480,7 @@ export DBX_USERNAME_NO_DOMAIN="${DBX_USERNAME%%@*}"                  # remove ev
 export DBX_USERNAME_NO_DOMAIN_DOT="${DBX_USERNAME_NO_DOMAIN//./_}"   # . to _
 
 export RG_NAME=${RG_NAME:-${WHOAMI}-rg}                # resource group name
+export DBX_WORKSPACE_PATH=${DBX_WORKSPACE_PATH:-"/Users/${DBX_USERNAME}/lfcddemokit"}
 
 # return 3 variables
 read_fqdn_dba_if_host(){

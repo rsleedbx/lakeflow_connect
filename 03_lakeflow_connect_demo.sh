@@ -25,17 +25,21 @@ if [[ -z "$CONNECTION_NAME" ]]; then
     CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr [.@] _)
 fi
 export CONNECTION_NAME
+export CONNECTION_CREATED
 # long name
 #export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE:+${GATEWAY_DRIVER_NODE}GDN_}${GATEWAY_WORKER_NODE:+${GATEWAY_WORKER_NODE}GWN_}${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_GW
 #export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE:+${GATEWAY_DRIVER_NODE}GDN_}${GATEWAY_WORKER_NODE:+${GATEWAY_WORKER_NODE}GWN_}${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_IG
 # short name
 export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_GW
 export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_IG
+export CLEANUP_JOB_NAME=${WHOAMI}_${NINE_CHAR_ID}_cleanup
 # used for the pipelines
-export TARGET_CATALOG="main"
+export TARGET_CATALOG=${TARGET_CATALOG:-"main"}
 export TARGET_SCHEMA=${WHOAMI}_${NINE_CHAR_ID}
 export STAGING_CATALOG=${TARGET_CATALOG}
 export STAGING_SCHEMA=${TARGET_SCHEMA}
+export ELOG_CATALOG=${ELOG_CATALOG:-"main"}
+export ELOG_SCHEMA=${ELOG_SCHEMA:-${WHOAMI}}
 # check access to SQL Server
 
 
@@ -44,23 +48,31 @@ export STAGING_SCHEMA=${TARGET_SCHEMA}
 echo -e "\nCreate target and staging schemas"
 echo -e   "---------------------------------\n"
 
+if ! DBX schemas get "$ELOG_CATALOG.$ELOG_SCHEMA"; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX schemas create "$ELOG_SCHEMA" "$ELOG_CATALOG"
+fi
+
+export TARGET_CATALOG_SCHEMA_CREATED=""
 if ! DBX schemas get "$TARGET_CATALOG.$TARGET_SCHEMA"; then
-    if ! DBX schemas create "$TARGET_SCHEMA" "$TARGET_CATALOG"; then
-        cat /tmp/dbx_stderr.$$
-        return 1
-    fi
+
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX schemas create "$TARGET_SCHEMA" "$TARGET_CATALOG"
+
     if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$TARGET_CATALOG.$TARGET_SCHEMA" >> ~/nohup.out 2>&1 &
+        :
+        export TARGET_CATALOG_SCHEMA_CREATED=1
+        #CLEANUP nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$TARGET_CATALOG.$TARGET_SCHEMA" >> ~/nohup.out 2>&1 &
     fi
 fi
 
+export STAGE_CATALOG_SCHEMA_CREATED=""
 if [[ "$TARGET_CATALOG.$TARGET_SCHEMA" != "$STAGING_CATALOG.$STAGING_SCHEMA" ]] && ! DBX schemas get "$STAGING_CATALOG.$STAGING_SCHEMA"; then
-    if ! DBX schemas create "$STAGING_SCHEMA" "$STAGING_CATALOG"; then
-        cat /tmp/dbx_stderr.$$
-        return 1
-    fi
+
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX schemas create "$STAGING_SCHEMA" "$STAGING_CATALOG"
+
     if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$STAGING_CATALOG.$STAGING_SCHEMA" >> ~/nohup.out 2>&1 &
+        :
+        export STAGE_CATALOG_SCHEMA_CREATED=1
+        #CLEANUP nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$STAGING_CATALOG.$STAGING_SCHEMA" >> ~/nohup.out 2>&1 &
     fi
 fi
 
@@ -88,8 +100,9 @@ if ! DBX connections get "$CONNECTION_NAME"; then
         return 1
     fi
     if [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
-        echo -e "\nDeleting connection ${CONNECTION_NAME} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
+        CONNECTION_CREATED=1
+        #CLEANUP nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
+        #CLEANUP echo -e "\nDeleting connection ${CONNECTION_NAME} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi
 else
   # in case password is updated
@@ -129,7 +142,7 @@ GATEWAY_EVENT_LOG="event_log_${GATEWAY_PIPELINE_NAME}"
 
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$GATEWAY_PIPELINE_NAME"'",
-'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$TARGET_CATALOG\",\"schema\": \"$TARGET_SCHEMA\",\"name\": \"event_log_ingestion\"},"}'
+'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$ELOG_CATALOG\",\"schema\": \"$ELOG_SCHEMA\",\"name\": \"ingestion_elog_${GATEWAY_PIPELINE_ID//-/_}\"},"}'
 "clusters": [
   {"label": "updates", 
     "spark_conf": {"gateway.logging.level": "DEBUG"}
@@ -156,11 +169,15 @@ GATEWAY_PIPELINE_ID="$(jq -r '.pipeline_id' /tmp/dbx_stdout.$$)"
 export GATEWAY_PIPELINE_ID
 
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$GATEWAY_PIPELINE_ID">> ~/nohup.out 2>&1 &
+    :
+    #CLEANUP nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$GATEWAY_PIPELINE_ID">> ~/nohup.out 2>&1 &
     nohup sleep "${STOP_AFTER_SLEEP}" && db_replication_cleanup "$GATEWAY_PIPELINE_ID">> ~/nohup.out 2>&1 &
 fi
-if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$GATEWAY_PIPELINE_ID"  >> ~/nohup.out 2>&1 &
+
+if [[ -z "${STOP_AFTER_SLEEP}" ]] && [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
+    :
+    #CLEANUP nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$GATEWAY_PIPELINE_ID"  >> ~/nohup.out 2>&1 &
+    nohup sleep "${STOP_AFTER_SLEEP}" && db_replication_cleanup "$GATEWAY_PIPELINE_ID">> ~/nohup.out 2>&1 &
 fi
 
 # #############################################################################
@@ -175,7 +192,7 @@ case "${CDC_CT_MODE}" in
 echo "enabling replication on the schema"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
-'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$TARGET_CATALOG\",\"schema\": \"$TARGET_SCHEMA\",\"name\": \"event_log_ingestion\"},"}' 
+'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$ELOG_CATALOG\",\"schema\": \"$ELOG_SCHEMA\",\"name\": \"ingestion_elog_${INGESTION_PIPELINE_ID//-/_}\"},"}' 
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
@@ -183,7 +200,7 @@ if ! DBX pipelines create --json "$(echo '{
   "source_type": "'"$SOURCE_TYPE"'",
   "objects": [
      {"schema": {
-        "source_catalog": "'"$DB_CATALOG"'",
+        '$(if [[ "$SOURCE_TYPE" != "MYSQL" ]]; then echo "\"source_catalog\": \"$DB_CATALOG\",";fi)'
         "source_schema": "'"$DB_SCHEMA"'",
         "destination_catalog": "'"$TARGET_CATALOG"'",
         "destination_schema": "'"$TARGET_SCHEMA"'",
@@ -202,7 +219,7 @@ fi
 echo "enabling replication on the intpk table"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
-'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$TARGET_CATALOG\",\"schema\": \"$TARGET_SCHEMA\",\"name\": \"event_log_ingestion\"},"}' 
+'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$ELOG_CATALOG\",\"schema\": \"$ELOG_SCHEMA\",\"name\": \"ingestion_elog_${INGESTION_PIPELINE_ID//-/_}\"},"}' 
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
@@ -210,7 +227,7 @@ if ! DBX pipelines create --json "$(echo '{
   "source_type": "'"$SOURCE_TYPE"'",
   "objects": [
      {"table": {
-        "source_catalog": "'"$DB_CATALOG"'",
+        '$(if [[ "$SOURCE_TYPE" != "MYSQL" ]]; then echo "\"source_catalog\": \"$DB_CATALOG\",";fi)'
         "source_schema": "'"$DB_SCHEMA"'",
         "source_table": "intpk",
         "destination_catalog": "'"$TARGET_CATALOG"'",
@@ -228,7 +245,7 @@ fi
 echo "enabling replication on the dtix table"
 if ! DBX pipelines create --json "$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
-'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$TARGET_CATALOG\",\"schema\": \"$TARGET_SCHEMA\",\"name\": \"event_log_ingestion\"},"}' 
+'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$ELOG_CATALOG\",\"schema\": \"$ELOG_SCHEMA\",\"name\": \"ingestion_elog_${INGESTION_PIPELINE_ID//-/_}\"},"}' 
 "performance_target": "'"$JOBS_PERFORMANCE_MODE"'",
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",
@@ -237,7 +254,7 @@ if ! DBX pipelines create --json "$(echo '{
   "source_type": "'"$SOURCE_TYPE"'",
   "objects": [
      {"table": {
-        "source_catalog": "'"$DB_CATALOG"'",
+        '$(if [[ "$SOURCE_TYPE" != "MYSQL" ]]; then echo "\"source_catalog\": \"$DB_CATALOG\",";fi)'
         "source_schema": "'"$DB_SCHEMA"'",
         "source_table": "dtix",
         "destination_catalog": "'"$TARGET_CATALOG"'",
@@ -261,10 +278,12 @@ INGESTION_PIPELINE_ID=$(jq -r '.pipeline_id' /tmp/dbx_stdout.$$)
 export INGESTION_PIPELINE_ID
 
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
+    :
+    #CLEANUP nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
 fi
 if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
+    :
+    #CLEANUP nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
 fi
 
 # start if not cont
@@ -311,10 +330,12 @@ export INGESTION_JOB_ID
 
 # print UI URL
 if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    nohup sleep "${STOP_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
+    :
+    #CLEANUP nohup sleep "${STOP_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
 fi
 if [[ -z "${STOP_AFTER_SLEEP}" ]] && [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
+    :
+    #CLEANUP nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
 fi
 
 
@@ -355,9 +376,74 @@ fi
 
 # #############################################################################
 
+echo -e "\n Cleanup job - only show up in Runs UI Interface"
+echo -e    "----------------------------------------------\n"
+
+if ! DBX workspace list $DBX_WORKSPACE_PATH/copy_event_log.ipynb; then
+    DBX workspace mkdirs $DBX_WORKSPACE_PATH
+    if [[ -f ./bin/copy_event_log.ipynb ]]; then
+        DBX workspace import $DBX_WORKSPACE_PATH/copy_event_log.ipynb --file ./bin/copy_event_log.ipynb --language PYTHON --format JUPYTER --overwrite
+    else
+        wget -qO- https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/bin/copy_event_log.ipynb > /tmp/copy_event_log.ipynb.$$
+        DBX workspace import $DBX_WORKSPACE_PATH/copy_event_log.ipynb --file /tmp/copy_event_log.ipynb.$$ --language PYTHON --format JUPYTER --overwrite
+    fi
+fi
+
+get_cleanup_job_json() {
+    local ACTION_NAME=${1:-stop}
+    local CONNECTION_NAME=${CONNECTION_NAME}
+
+    if [[ -z "$DELETE_DB_AFTER_SLEEP" ]] && [[ -z "$CONNECTION_CREATED" ]]; then CONNECTION_NAME=""; fi
+        
+    CLEANUP_JOB_JSON='{
+    "name": "'${CLEANUP_JOB_NAME}'",
+    "tasks": [{
+        "task_key": "my_notebook_task",
+        "notebook_task": {
+            "notebook_path": "'$DBX_WORKSPACE_PATH'/copy_event_log.ipynb",
+            "base_parameters": {
+                "action_name": "'$ACTION_NAME'",
+                "connection_name": "'$CONNECTION_NAME'",
+                "gateway_pipeline_name": "'$GATEWAY_PIPELINE_NAME'",
+                "gateway_pipeline_id": "'$GATEWAY_PIPELINE_ID'",
+                "ingestion_pipeline_name": "'$INGESTION_PIPELINE_NAME'",
+                "ingestion_pipeline_id": "'$INGESTION_PIPELINE_ID'",
+                "target_catalog": "'"$TARGET_CATALOG"'",
+                "target_schema": "'"$TARGET_SCHEMA"'",
+                "stage_catalog": "'"$STAGING_CATALOG"'",
+                "stage_schema": "'"$STAGING_SCHEMA"'",
+                "elog_catalog": "'"$ELOG_CATALOG"'",
+                "elog_schema": "'"$ELOG_SCHEMA"'",
+                "job_name": "'$INGESTION_PIPELINE_NAME'",
+                "job_id": "'$INGESTION_JOB_ID'",
+                "stage_created": "'$STAGE_CATALOG_SCHEMA_CREATED'",
+                "target_created": "'$TARGET_CATALOG_SCHEMA_CREATED'",
+                "connection_created": "'$CONNECTION_CREATED'"
+            },
+            "compute_spec": {
+                "kind": "serverless"
+            }
+        }
+    }]
+    }'
+    echo "$CLEANUP_JOB_JSON"
+}
+
+if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
+    nohup sleep "${STOP_AFTER_SLEEP}" && \
+        DBX jobs submit --run-name "${CLEANUP_JOB_NAME}_stop" --no-wait --json "$(get_cleanup_job_json stop)" >> ~/nohup.out 2>&1 &
+fi
+if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
+    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && \
+        DBX jobs submit --run-name "${CLEANUP_JOB_NAME}_delete" --no-wait --json "$(get_cleanup_job_json delete)" >> ~/nohup.out 2>&1 &
+fi
+
+# #############################################################################
+
 echo -e "\nClick on UI"
 echo -e   "-----------\n"
 
+echo -e "elog/GW Tlmy  : ${DATABRICKS_HOST_NAME}/explore/data/${ELOG_CATALOG}/${ELOG_SCHEMA}"
 echo -e "Staging schema: ${DATABRICKS_HOST_NAME}/explore/data/${STAGING_CATALOG}/${STAGING_SCHEMA}"
 echo -e "Target schema : ${DATABRICKS_HOST_NAME}/explore/data/${TARGET_CATALOG}/${TARGET_SCHEMA}"
 echo -e "Connection    : ${DATABRICKS_HOST_NAME}/explore/connections/${CONNECTION_NAME}"

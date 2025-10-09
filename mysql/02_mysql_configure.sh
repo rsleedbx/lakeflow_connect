@@ -56,7 +56,7 @@ create user if not exists ${USER_USERNAME}@'%' IDENTIFIED BY '${USER_PASSWORD}';
 -- set / reset password
 alter user ${USER_USERNAME} IDENTIFIED BY '${USER_PASSWORD}';
 -- grant access
-grant create, select,insert, delete, update on *.* to ${USER_USERNAME};
+grant alter,create,drop, select,insert,delete, update on *.* to ${USER_USERNAME};
 -- enable replication
 grant REPLICATION CLIENT on *.* to ${USER_USERNAME};
 grant REPLICATION SLAVE on *.* to ${USER_USERNAME};
@@ -120,7 +120,7 @@ BEGIN
         COMMIT;
         
         -- dtix
-        INSERT INTO dtix (dt) VALUES (CURRENT_TIMESTAMP()), (CURRENT_TIMESTAMP()), (CURRENT_TIMESTAMP());
+        INSERT INTO dtix (pk,dt) VALUES (1,CURRENT_TIMESTAMP()), (2,CURRENT_TIMESTAMP()), (3,CURRENT_TIMESTAMP());
         COMMIT;
         
         -- wait (Replaced raise notice with SELECT for debugging and pg_sleep with SLEEP)
@@ -143,17 +143,19 @@ EOF
 
 echo -e "Creating tables\n"
 
-DB_CATALOG="${DB_SCHEMA}" SQLCLI <<EOF
-    create table if not exists ${DB_SCHEMA}.intpk (pk serial primary key, dt timestamp);
-    create table if not exists ${DB_SCHEMA}.dtix (dt timestamp);
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="${DB_SCHEMA}" SQLCLI <<EOF
+    create table if not exists ${DB_SCHEMA}.intpk (
+        pk serial primary key, dt timestamp ON UPDATE CURRENT_TIMESTAMP, ops varchar(255) default 'insert');
+    create table if not exists ${DB_SCHEMA}.dtix (
+        pk bigint, dt timestamp ON UPDATE CURRENT_TIMESTAMP, ops varchar(255) default 'insert');
 EOF
 
 if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
 DB_CATALOG="${DB_SCHEMA}" SQLCLI <<EOF
     insert into ${DB_SCHEMA}.intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
-    insert into ${DB_SCHEMA}.dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
+    insert into ${DB_SCHEMA}.dtix (pk,dt) values (1,CURRENT_TIMESTAMP),(2,CURRENT_TIMESTAMP),(3,CURRENT_TIMESTAMP);
     select '${DB_SCHEMA}.intpk',max(pk) from ${DB_SCHEMA}.intpk;
-    select '${DB_SCHEMA}.dtix',dt from ${DB_SCHEMA}.dtix limit 1;    
+    select '${DB_SCHEMA}.dtix',max(dt) from ${DB_SCHEMA}.dtix limit 1;    
 EOF
 
 # .\+ = one or more so that nulls are not accepted

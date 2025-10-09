@@ -238,6 +238,11 @@ PARAMETER_SET=""
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_STDOUT=/tmp/az_parm_list.$$ AZ mysql flexible-server parameter list --server-name "$DB_HOST"
 
 # lakeflow connect 
+if [[ "on" == "$(jq -r '.[] | select(.name == "sql_generate_invisible_primary_key") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ mysql flexible-server parameter set --server-name "$DB_HOST" --name  sql_generate_invisible_primary_key --value OFF
+    PARAMETER_SET="1"
+fi
+
 if [[ "full" != "$(jq -r '.[] | select(.name == "binlog_row_image") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
     DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ mysql flexible-server parameter set --server-name "$DB_HOST" --name  binlog_row_image --value full
     PARAMETER_SET="1"

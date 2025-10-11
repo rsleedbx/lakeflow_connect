@@ -145,9 +145,13 @@ echo -e "Creating tables\n"
 
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="${DB_SCHEMA}" SQLCLI <<EOF
     create table if not exists ${DB_SCHEMA}.intpk (
-        pk serial primary key, dt timestamp ON UPDATE CURRENT_TIMESTAMP, ops varchar(255) default 'insert');
+        pk serial primary key, 
+        dt timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, 
+        ops varchar(255) default 'insert');
     create table if not exists ${DB_SCHEMA}.dtix (
-        pk bigint, dt timestamp ON UPDATE CURRENT_TIMESTAMP, ops varchar(255) default 'insert');
+        pk bigint, 
+        dt timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, 
+        ops varchar(255) default 'insert');
 EOF
 
 if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then

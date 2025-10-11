@@ -83,42 +83,42 @@ echo -e    "----------------\n"
 
 # create connection and delete or update
 # the echo is to make the if statement work
+
 if ! DBX connections get "$CONNECTION_NAME"; then
-    if ! DBX connections create --json "$(echo '{
-        "name": "'"$CONNECTION_NAME"'",
-        "connection_type": "'"$CONNECTION_TYPE"'",
-        "comment": "'"CDC_CT_MODE=${CDC_CT_MODE}"'",
-        "options": {
-        "host": "'"$DB_HOST_FQDN"'",
-        "port": "'"$DB_PORT"'",
-        '$(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then printf '"trustServerCertificate": "true",'; fi)'
-        "user": "'"$USER_USERNAME"'",
-        "password": "'"${USER_PASSWORD}"'"
-        }
-    }')"; then
-        cat /tmp/dbx_stderr.$$
-        return 1
-    fi
+conn_json=$(yq -o json <<EOF
+name: $CONNECTION_NAME
+connection_type: $CONNECTION_TYPE
+comment: '{"catalog": "$DB_CATALOG", "schema": "$DB_SCHEMA", "secretes": {"scope": "$SECRETS_SCOPE", "key": "$DB_HOST"}}'
+options: 
+    host: $DB_HOST_FQDN
+    port: $DB_PORT
+    user: $USER_USERNAME
+    password: $USER_PASSWORD
+    $(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then printf "trustServerCertificate: true"; fi)
+EOF
+)
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX connections create --json "$conn_json"
     if [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
         CONNECTION_CREATED=1
-        #CLEANUP nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
-        #CLEANUP echo -e "\nDeleting connection ${CONNECTION_NAME} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
+        CLEANUP nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
+        CLEANUP echo -e "\nDeleting connection ${CONNECTION_NAME} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi
 else
   # in case password is updated
-  if ! DBX connections update "$CONNECTION_NAME" --json "$(echo '{
-        "options": {
-        "host": "'"$DB_HOST_FQDN"'",
-        "port": "'"$DB_PORT"'",
-        '$(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then echo "\"trustServerCertificate\": \"true\",";fi)'
-        "user": "'"$USER_USERNAME"'",
-        "password": "'"${USER_PASSWORD}"'"
-        }
-    }')"; then
-        cat /tmp/dbx_stderr.$$
-        return 1
-    fi
+conn_json=$(yq -o json <<EOF
+comment: '{"catalog": "$DB_CATALOG", "schema": "$DB_SCHEMA", "secretes": {"scope": "$SECRETS_SCOPE", "key": "$DB_HOST"}}'
+options: 
+    host: $DB_HOST_FQDN
+    port: $DB_PORT
+    user: $USER_USERNAME
+    password: $USER_PASSWORD
+    $(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then printf "trustServerCertificate: true"; fi)
+EOF
+)
+    # connections update does not update comments
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/connections/"$CONNECTION_NAME" --json "$conn_json"
 fi
+
 CONNECTION_ID=$(jq -r '.connection_id' /tmp/dbx_stdout.$$)
 export CONNECTION_ID
 

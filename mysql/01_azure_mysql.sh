@@ -123,16 +123,20 @@ if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
 fi
 
 # get avail catalog if not specified
+STATE[secrets_retrieved]=0
 if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]]; then
 
     # check if secrets exists for this host
     if get_secrets "$DB_HOST"; then
+        STATE[secrets_retrieved]=1
         echo -e "\n USING VALUES FROM SECRETS \v"
     fi
 fi
 
+STATE[secrets_valid]=1
 # secrets was empty or invalid.
 if [[ -z "${DBA_USERNAME}" || -z "$DB_HOST" || "$DB_HOST" != *"-${DB_SUFFIX}" ]]; then 
+    STATE[secrets_valid]=0
     DB_HOST="${DB_BASENAME}-${DB_SUFFIX}"; 
 fi  
 
@@ -157,7 +161,7 @@ if ! AZ mysql flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
     # sql server create does not support tags
     DB_EXIT_ON_ERROR="PRINT_EXIT" AZ mysql flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
-        --database-name "${DB_CATALOG}" \
+        --database-name "${DB_SCHEMA}" \
         --version 8.4 \
         --public-access Enabled \
         --storage-size 32 \
@@ -272,12 +276,10 @@ fi
 # #############################################################################
 # save the credentials to secrets store for reuse
 
-if [[ -z "$DELETE_DB_AFTER_SLEEP" ]] && [[ "${DB_HOST_CREATED}" == "1" || "${DB_PASSWORD_CHANGED}" == "1" ]]; then 
-    echo "writing secrets for created database that won't be deleted"
-    put_secrets
-elif [[  "${SECRETS_RETRIEVED}" == '1' && "${DB_PASSWORD_CHANGED}" == "1" ]] ; then
-    echo "writing secrets for existing database with new DBA password"
-    put_secrets
+# check return code instead of echo values
+if should_save_secrets; then 
+    put_secrets                             # bash export format
+    put_secrets "${DB_HOST}_json" "json"    # json format for easier parsing
 fi
 
 # #############################################################################

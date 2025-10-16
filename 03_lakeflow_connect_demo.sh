@@ -25,7 +25,6 @@ if [[ -z "$CONNECTION_NAME" ]]; then
     CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr [.@] _)
 fi
 export CONNECTION_NAME
-export CONNECTION_CREATED
 # long name
 #export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE:+${GATEWAY_DRIVER_NODE}GDN_}${GATEWAY_WORKER_NODE:+${GATEWAY_WORKER_NODE}GWN_}${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_GW
 #export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE:+${GATEWAY_DRIVER_NODE}GDN_}${GATEWAY_WORKER_NODE:+${GATEWAY_WORKER_NODE}GWN_}${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_IG
@@ -42,6 +41,12 @@ export ELOG_CATALOG=${ELOG_CATALOG:-"main"}
 export ELOG_SCHEMA=${ELOG_SCHEMA:-${WHOAMI}}
 # check access to SQL Server
 
+function cleanup() {
+    if [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
+        CLEANUP nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
+        CLEANUP echo -e "\nDeleting connection ${CONNECTION_NAME} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
+    fi
+}
 
 # #############################################################################
 
@@ -84,11 +89,10 @@ echo -e    "----------------\n"
 # create connection and delete or update
 # the echo is to make the if statement work
 
-if ! DBX connections get "$CONNECTION_NAME"; then
-conn_json=$(yq -o json <<EOF
+STATE[conn_create_json]=$(yq -o json <<EOF
 name: $CONNECTION_NAME
 connection_type: $CONNECTION_TYPE
-comment: '{"catalog": "$DB_CATALOG", "schema": "$DB_SCHEMA", "secretes": {"scope": "$SECRETS_SCOPE", "key": "$DB_HOST"}}'
+comment: '{"catalog": "$DB_CATALOG", "schema": "$DB_SCHEMA", "secrets": {"scope": "$SECRETS_SCOPE", "key": "$DB_HOST"}}'
 options: 
     host: $DB_HOST_FQDN
     port: $DB_PORT
@@ -97,30 +101,21 @@ options:
     $(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then printf "trustServerCertificate: true"; fi)
 EOF
 )
-    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX connections create --json "$conn_json"
-    if [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
-        CONNECTION_CREATED=1
-        CLEANUP nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
-        CLEANUP echo -e "\nDeleting connection ${CONNECTION_NAME} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
-    fi
+STATE[conn_patch_json]=$(echo "${STATE[conn_create_json]}" | jq 'del(.connection_type)')
+
+if ! DBX connections get "$CONNECTION_NAME"; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX connections create --json "${STATE[conn_create_json]}"
+    STATE[connection_created]=1
 else
-  # in case password is updated
-conn_json=$(yq -o json <<EOF
-comment: '{"catalog": "$DB_CATALOG", "schema": "$DB_SCHEMA", "secretes": {"scope": "$SECRETS_SCOPE", "key": "$DB_HOST"}}'
-options: 
-    host: $DB_HOST_FQDN
-    port: $DB_PORT
-    user: $USER_USERNAME
-    password: $USER_PASSWORD
-    $(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then printf "trustServerCertificate: true"; fi)
-EOF
-)
     # connections update does not update comments
-    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/connections/"$CONNECTION_NAME" --json "$conn_json"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/connections/"$CONNECTION_NAME" --json "${STATE[conn_patch_json]}"
 fi
 
 CONNECTION_ID=$(jq -r '.connection_id' /tmp/dbx_stdout.$$)
+STATE[CONNECTION_ID]="${CONNECTION_ID}"
 export CONNECTION_ID
+
+return 1
 
 # #############################################################################
 
@@ -393,7 +388,7 @@ get_cleanup_job_json() {
     local ACTION_NAME=${1:-stop}
     local CONNECTION_NAME=${CONNECTION_NAME}
 
-    if [[ -z "$DELETE_DB_AFTER_SLEEP" ]] && [[ -z "$CONNECTION_CREATED" ]]; then CONNECTION_NAME=""; fi
+    if [[ -z "$DELETE_DB_AFTER_SLEEP" ]] && [[ -z "${STATE[connection_created]}" ]]; then CONNECTION_NAME=""; fi
         
     CLEANUP_JOB_JSON='{
     "name": "'${CLEANUP_JOB_NAME}'",
@@ -418,7 +413,7 @@ get_cleanup_job_json() {
                 "job_id": "'$INGESTION_JOB_ID'",
                 "stage_created": "'$STAGE_CATALOG_SCHEMA_CREATED'",
                 "target_created": "'$TARGET_CATALOG_SCHEMA_CREATED'",
-                "connection_created": "'$CONNECTION_CREATED'"
+                connection_created: "'${STATE[connection_created]}'"
             },
             "compute_spec": {
                 "kind": "serverless"

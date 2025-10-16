@@ -25,6 +25,14 @@ if (( ${BASH_VERSINFO[0]} < 4 )); then
     kill -INT $$
 fi
 
+# config 
+declare -A CONFIG 
+export CONFIG
+
+# state
+declare -A STATE 
+export STATE
+
 # set tags that will resources remove using cloud scheduler
 if ! declare -p REMOVE_AFTER &> /dev/null; then
     if ! REMOVE_AFTER=$(date --date='+0 day' +%Y-%m-%d 2>/dev/null); then   # blank is do not delete
@@ -166,6 +174,7 @@ CONT_OR_EXIT() {
         return 0
     fi
 }
+export -f CONT_OR_EXIT
 
 # display AZ commands
 AZ() {
@@ -569,6 +578,21 @@ TEST_DB_CONNECT() {
 # #############################################################################
 # retrieve setting from secrets if exists
 
+# return 0 to save
+# return 1 to not save
+should_save_secrets() {
+    if [[ -z "$DELETE_DB_AFTER_SLEEP" ]] && [[ "${DB_HOST_CREATED}" == "1" || "${DB_PASSWORD_CHANGED}" == "1" ]]; then 
+        echo "writing secrets for created database that won't be deleted"
+        return 0
+    elif [[  "${SECRETS_RETRIEVED}" == '1' && "${DB_PASSWORD_CHANGED}" == "1" ]] ; then
+        echo "writing secrets for existing database with new DBA password"
+        return 0
+    else
+        echo "don't save secrets"
+        return 1
+    fi
+}
+export -f should_save_secrets
 
 save_before_secrets() {
     for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
@@ -598,24 +622,46 @@ get_secrets() {
     fi
 
 }
+export -f get_secrets
 
 put_secrets() {
     local secrets_key=${1:-"$DB_HOST"}
-    local key_value=""
+    local secretes_format=${2:-""}
+    local key_value="${3:-""}"
+
     # create secret scope if does not exist
     if ! DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets list-secrets "${SECRETS_SCOPE}"; then
         if ! DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets create-scope "${SECRETS_SCOPE}"; then
             cat /tmp/dbx_stderr.$$; return 1;
         fi
     fi
-    for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD CONNECTION_TYPE; do
-        key_value="export ${k}='${!k}';$key_value"
-    done
+
+    if [[ -z "$key_value" ]] && [[ "${secretes_format}" == "json" ]]; then
+key_value=$(yq -o json <<EOF   
+connection_type: $CONNECTION_TYPE
+catalog: $DB_CATALOG  
+schema: $DB_SCHEMA
+host: $DB_HOST  
+host_fqdn: $DB_HOST_FQDN  
+port: $DB_PORT  
+password: $USER_PASSWORD 
+user: $USER_USERNAME  
+dba:
+  user: $DBA_USERNAME 
+  password: $DBA_PASSWORD  
+EOF
+)
+    else
+        for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD CONNECTION_TYPE; do
+            key_value="export ${k}='${!k}';$key_value"
+        done
+    fi
+
     if ! DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets put-secret "${SECRETS_SCOPE}" "${secrets_key}" --string-value "$key_value"; then
         cat /tmp/dbx_stderr.$$; return 1;
     fi
 }
-export put_secrets
+export -f put_secrets
 
 # #############################################################################
 
@@ -637,6 +683,38 @@ SQLCLI_USER() {
 export -f SQLCLI_USER
 
 # #############################################################################
+
+connection_create_json_from_secrets() {
+jq --arg name "$1" '{
+  name: ($name),
+  connection_type: (.connection_type // "SQLSERVER"),
+  comment: ("{\"catalog\": \"" + .catalog + "\", \"schema\": \"" + .schema + "\", \"secrets\": {\"scope\": \"lfcddemo\", \"key\": \"" + .host + "\"}}"),
+  options: ({
+    host: .host_fqdn,
+    port: (.port | tostring),
+    user: .user,
+    password: .password
+  } + if (.connection_type // "SQLSERVER") == "SQLSERVER" then {trustServerCertificate: "true"} else {} end)
+}'
+}
+export -f connection_create_json_from_secrets
+
+connection_spec_create() {
+STATE[conn_create_json]=$(yq -o json <<EOF
+name: $CONNECTION_NAME
+connection_type: $CONNECTION_TYPE
+comment: '{"catalog": "$DB_CATALOG", "schema": "$DB_SCHEMA", "secrets": {"scope": "$SECRETS_SCOPE", "key": "$DB_HOST"}}'
+options: 
+    host: $DB_HOST_FQDN
+    port: $DB_PORT
+    user: $USER_USERNAME
+    password: $USER_PASSWORD
+    $(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then printf "trustServerCertificate: true"; fi)
+EOF
+)
+STATE[conn_patch_json]=$(echo "${STATE[conn_create_json]}" | jq 'del(.connection_type)')
+}
+export -f connection_spec_create
 
 # make sure executables are there are with correct versions
 

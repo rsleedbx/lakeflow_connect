@@ -18,7 +18,7 @@ export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"20m"}
 NINE_CHAR_ID=$(date +%s | xargs printf "%08x\n") # number of seconds since epoch in hex
 export NINE_CHAR_ID
 # databricks URL
-if ! DBX auth env; then cat /tmp/dbx_stderr.$$; return 1; fi
+DB_EXIT_ON_ERROR="PRINT_EXIT" DBX auth env
 DATABRICKS_HOST_NAME=$(jq -r .env.DATABRICKS_HOST /tmp/dbx_stdout.$$)
 # used for connection
 if [[ -z "$CONNECTION_NAME" ]]; then 
@@ -115,7 +115,6 @@ CONNECTION_ID=$(jq -r '.connection_id' /tmp/dbx_stdout.$$)
 STATE[CONNECTION_ID]="${CONNECTION_ID}"
 export CONNECTION_ID
 
-return 1
 
 # #############################################################################
 
@@ -133,9 +132,7 @@ fi
 echo -e "\nCreate Gateway Pipeline"
 echo -e   "-----------------------\n"
 
-GATEWAY_EVENT_LOG="event_log_${GATEWAY_PIPELINE_NAME}"
-
-if ! DBX pipelines create --json "$(echo '{
+gw_spec="$(echo '{
 "name": "'"$GATEWAY_PIPELINE_NAME"'",
 '${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$ELOG_CATALOG\",\"schema\": \"$ELOG_SCHEMA\",\"name\": \"ingestion_elog_${GATEWAY_PIPELINE_ID//-/_}\"},"}'
 "clusters": [
@@ -149,6 +146,7 @@ if ! DBX pipelines create --json "$(echo '{
   }
 ],
 "continuous": "'"$GATEWAY_PIPELINE_CONTINUOUS"'",
+"development": '"$PIPELINE_DEV_MODE"',
 "gateway_definition": {
   "connection_id": "'"$CONNECTION_ID"'",
   "gateway_storage_catalog": "'"$STAGING_CATALOG"'",
@@ -156,10 +154,12 @@ if ! DBX pipelines create --json "$(echo '{
   "gateway_storage_name": "'"$GATEWAY_PIPELINE_NAME"'" 
 }
 '$REMOVE_AFTER_TAG'
-}')"; then
-    cat /tmp/dbx_stderr.$$
-    return 1
-fi
+}')"
+
+GATEWAY_EVENT_LOG="event_log_${GATEWAY_PIPELINE_NAME}"
+
+DB_EXIT_ON_ERROR="PRINT_EXIT"  DBX pipelines create --json "$gw_spec"
+
 GATEWAY_PIPELINE_ID="$(jq -r '.pipeline_id' /tmp/dbx_stdout.$$)"
 export GATEWAY_PIPELINE_ID
 
@@ -180,12 +180,7 @@ fi
 echo -e "\nCreate Ingestion Pipeline"
 echo -e   "-------------------------\n"
 
-INGESTION_EVENT_LOG="event_log_${INGESTION_PIPELINE_NAME}"
-
-case "${CDC_CT_MODE}" in 
-"BOTH"|"NONE") 
-echo "enabling replication on the schema"
-if ! DBX pipelines create --json "$(echo '{
+ig_schema_spec="$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
 '${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$ELOG_CATALOG\",\"schema\": \"$ELOG_SCHEMA\",\"name\": \"ingestion_elog_${INGESTION_PIPELINE_ID//-/_}\"},"}' 
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
@@ -204,15 +199,9 @@ if ! DBX pipelines create --json "$(echo '{
         }}}
     ]
   }
-'$REMOVE_AFTER_TAG'
-}')"; then
-    cat /tmp/dbx_stderr.$$
-    return 1
-fi
-;;
-"CT") 
-echo "enabling replication on the intpk table"
-if ! DBX pipelines create --json "$(echo '{
+}')"
+
+ig_intpk_spec="$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
 '${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$ELOG_CATALOG\",\"schema\": \"$ELOG_SCHEMA\",\"name\": \"ingestion_elog_${INGESTION_PIPELINE_ID//-/_}\"},"}' 
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
@@ -230,24 +219,17 @@ if ! DBX pipelines create --json "$(echo '{
         }}
     ]
   }
-'$REMOVE_AFTER_TAG'
-}')"    ; then
-    cat /tmp/dbx_stderr.$$
-    return 1
-fi
-;;
-"CDC") 
-echo "enabling replication on the dtix table"
-if ! DBX pipelines create --json "$(echo '{
+}')"
+
+ig_dtix_sepc="$(echo '{
 "name": "'"$INGESTION_PIPELINE_NAME"'",
 '${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$ELOG_CATALOG\",\"schema\": \"$ELOG_SCHEMA\",\"name\": \"ingestion_elog_${INGESTION_PIPELINE_ID//-/_}\"},"}' 
-"performance_target": "'"$JOBS_PERFORMANCE_MODE"'",
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
   "source_type": "'"$SOURCE_TYPE"'",
-  "objects": [
+  "objects": [  
      {"table": {
         '$(if [[ "$SOURCE_TYPE" != "MYSQL" ]]; then echo "\"source_catalog\": \"$DB_CATALOG\",";fi)'
         "source_schema": "'"$DB_SCHEMA"'",
@@ -257,16 +239,53 @@ if ! DBX pipelines create --json "$(echo '{
         }}
     ]
   }
-'$REMOVE_AFTER_TAG'
-}')"; then
-    cat /tmp/dbx_stderr.$$
-    return 1
-fi
-;;
-*)
-echo "CDC_CT_MODE=${CDC_CT_MODE} must be BOTH|CT|CDC|NONE"
-return 1
-;;
+}')"
+
+ig_tables_spec="$(echo '{
+"name": "'"$INGESTION_PIPELINE_NAME"'",
+'${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$ELOG_CATALOG\",\"schema\": \"$ELOG_SCHEMA\",\"name\": \"ingestion_elog_${INGESTION_PIPELINE_ID//-/_}\"},"}' 
+"continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
+"development": '$PIPELINE_DEV_MODE',
+"ingestion_definition": {
+  "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
+  "objects": [
+     {"table": {
+        '$(if [[ "$SOURCE_TYPE" != "MYSQL" ]]; then echo "\"source_catalog\": \"$DB_CATALOG\",";fi)'
+        "source_schema": "'"$DB_SCHEMA"'",
+        "source_table": "intpk",
+        "destination_catalog": "'"$TARGET_CATALOG"'",
+        "destination_schema": "'"$TARGET_SCHEMA"'"
+        }},
+     {"table": {
+        '$(if [[ "$SOURCE_TYPE" != "MYSQL" ]]; then echo "\"source_catalog\": \"$DB_CATALOG\",";fi)'
+        "source_schema": "'"$DB_SCHEMA"'",
+        "source_table": "dtix",
+        "destination_catalog": "'"$TARGET_CATALOG"'",
+        "destination_schema": "'"$TARGET_SCHEMA"'"
+        }}
+    ]
+  }
+}')"
+
+INGESTION_EVENT_LOG="event_log_${INGESTION_PIPELINE_NAME}"
+
+case "${CDC_CT_MODE}" in 
+    "BOTH"|"NONE") 
+        echo "enabling replication on the schema"
+        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines create --json "$ig_schema_spec"
+    ;;
+    "CT") 
+        echo "enabling replication on the intpk table"
+        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines create --json "$ig_intpk_spec"
+    ;;
+    "CDC") 
+        echo "enabling replication on the dtix table"
+        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines create --json "$ig_dtix_spec"
+    ;;
+    *)
+        echo "CDC_CT_MODE=${CDC_CT_MODE} must be BOTH|CT|CDC|NONE"
+        return 1
+    ;;
 esac
 
 INGESTION_PIPELINE_ID=$(jq -r '.pipeline_id' /tmp/dbx_stdout.$$)
@@ -282,11 +301,8 @@ if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
 fi
 
 # start if not cont
-if [[ "$INGESTION_PIPELINE_CONTINUOUS" == 'false' ]]; then 
-    if ! DBX  pipelines start-update "$INGESTION_PIPELINE_ID"; then
-        cat /tmp/dbx_stderr.$$
-        return 1    
-    fi
+if [[ "$INGESTION_PIPELINE_CONTINUOUS" == "false" ]]; then 
+    DB_EXIT_ON_ERROR="PRINT_EXIT" pipelines start-update "$INGESTION_PIPELINE_ID"
 fi
 
 # #############################################################################
@@ -304,8 +320,7 @@ else
     CRON_HRS_TRIGGER='*'
 fi
 
-# 3 minutes past hour, run every 5 minutes
-if ! DBX jobs create --json "$(echo '{
+jobs_spec="$(echo '{
 "name":"'"$INGESTION_PIPELINE_NAME"'",
 "performance_target": "'"$JOBS_PERFORMANCE_MODE"'",
 "schedule": {"timezone_id":"UTC", "quartz_cron_expression": "0 '$JOBS_START_MIN_PAST_HOUR'/'$CRON_MIN_TRIGGER' '$CRON_HRS_TRIGGER' * * ?"},
@@ -315,10 +330,10 @@ if ! DBX jobs create --json "$(echo '{
   } 
 ]
 '$REMOVE_AFTER_TAG'
-}')"; then
-    cat /tmp/dbx_stderr.$$
-    return 1    
-fi
+}')"
+
+# 3 minutes past hour, run every 5 minutes
+DB_EXIT_ON_ERROR="PRINT_EXIT" DBX jobs create --json "$jobs_spec"
 
 INGESTION_JOB_ID=$(jq -r '.job_id' /tmp/dbx_stdout.$$)
 export INGESTION_JOB_ID
@@ -342,9 +357,9 @@ echo -e   "---------------------------------------------\n"
 
 jobs_pipelines_permission='{"access_control_list": [{"user_name": "'"$DBX_USERNAME"'","permission_level": "IS_OWNER"},{"group_name": "users","permission_level": "CAN_MANAGE"}]}'
 
-if ! DBX permissions update pipelines "$GATEWAY_PIPELINE_ID"   --json "$jobs_pipelines_permission"; then cat /tmp/dbx_stderr.$$; return 1; fi 
-if ! DBX permissions update pipelines "$INGESTION_PIPELINE_ID" --json "$jobs_pipelines_permission"; then cat /tmp/dbx_stderr.$$; return 1; fi  
-if ! DBX permissions update jobs      "$INGESTION_JOB_ID"      --json "$jobs_pipelines_permission"; then cat /tmp/dbx_stderr.$$; return 1; fi  
+DB_EXIT_ON_ERROR="PRINT_EXIT" DBX permissions update pipelines "$GATEWAY_PIPELINE_ID"   --json "$jobs_pipelines_permission"
+DB_EXIT_ON_ERROR="PRINT_EXIT" DBX permissions update pipelines "$INGESTION_PIPELINE_ID" --json "$jobs_pipelines_permission"
+DB_EXIT_ON_ERROR="PRINT_EXIT" DBX permissions update jobs      "$INGESTION_JOB_ID"      --json "$jobs_pipelines_permission" 
 
 # #############################################################################
 
@@ -413,7 +428,7 @@ get_cleanup_job_json() {
                 "job_id": "'$INGESTION_JOB_ID'",
                 "stage_created": "'$STAGE_CATALOG_SCHEMA_CREATED'",
                 "target_created": "'$TARGET_CATALOG_SCHEMA_CREATED'",
-                connection_created: "'${STATE[connection_created]}'"
+                "connection_created" : "'${STATE[connection_created]}'"
             },
             "compute_spec": {
                 "kind": "serverless"

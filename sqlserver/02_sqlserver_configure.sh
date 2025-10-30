@@ -94,6 +94,8 @@ fi
 
 # database enable / disable CT
 
+set_ct_on_catalog() {
+
 case "${CDC_CT_MODE}" in 
 "BOTH"|"CT") 
 
@@ -143,11 +145,13 @@ else
 fi
 
 esac
+}
 
 # #############################################################################
 
 # database enable / disable CDC 
 
+set_cdc_on_catalog() {
 case "${CDC_CT_MODE}" in 
 "BOTH"|"CDC") 
 # NOCOUNT is required to fix Invalid cursor state, SQL state 24000 in SQLExecDirect
@@ -222,6 +226,13 @@ fi
 ;;
 
 esac
+}
+
+set_repl_on_catalog() {
+    set_ct_on_catalog
+    set_cdc_on_catalog
+}
+set_repl_on_catalog
 
 # #############################################################################
 
@@ -229,6 +240,9 @@ esac
 
 echo "enabling schema evolution"
 
+ddl_script_url="https://docs.databricks.com/aws/en/assets/files/ddl_support_objects-06ebad393ea6bc7d853d5504dc6542de.sql"
+
+set_sch_evo() {
 case "${CDC_CT_MODE}" in 
 "BOTH"|"CDC") 
     if [[ -f ./ddl_support_objects.sql ]]; then
@@ -238,7 +252,7 @@ case "${CDC_CT_MODE}" in
     sqlcmd -d "${DB_CATALOG}" -S ${DB_HOST_FQDN},${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60 
     else
     echo "downloading ./ddl_support_objects.sql"
-    wget -qO- https://docs.databricks.com/aws/en/assets/files/ddl_support_objects-079edd908cf2ef08ca9bdd0f34f068b4.sql | \
+    wget -qO- $ddl_script_url | \
     sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
     sqlcmd -d "${DB_CATALOG}" -S ${DB_HOST_FQDN},${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60 
     fi
@@ -251,7 +265,7 @@ case "${CDC_CT_MODE}" in
     sqlcmd -d "${DB_CATALOG}" -S ${DB_HOST_FQDN},${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60 
     else
     echo "downloading ./ddl_support_objects.sql"
-    wget -qO- https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/sqlserver/ddl_support_objects_ct_only.sql | \
+    wget -qO- $ddl_script_url | \
     sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
     sqlcmd -d "${DB_CATALOG}" -S ${DB_HOST_FQDN},${DB_PORT} -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l 60 
     fi
@@ -261,8 +275,8 @@ case "${CDC_CT_MODE}" in
     return 1
     ;;
 esac
-
-echo "enabled schema evolution"
+}
+set_sch_evo
 
 # #############################################################################
 
@@ -310,6 +324,7 @@ fi
 
 # enable CT on  tables
 
+set_repl_on_table() {
 if [[ "${CDC_CT_MODE}" =~ ^(BOTH|CT)$  ]]; then 
 cat <<EOF | sqlcmd -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 60 >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
     ALTER TABLE [${DB_SCHEMA}].[intpk] ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON) 
@@ -348,6 +363,9 @@ if [[ ! -s /tmp/select_stdout.$$ ]]; then echo "cdc table disabled ok $DB_SCHEMA
 else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 
 fi
+}
+
+set_repl_on_table
 
 # #############################################################################
 

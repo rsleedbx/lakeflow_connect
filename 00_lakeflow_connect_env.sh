@@ -277,7 +277,7 @@ GCLOUD_INIT() {
     export GCLOUD_ZONE="$(jq -r ".compute.zone" /tmp/gcloud_stdout.$$)"
 }
 
-# display AZ commands
+# display GLCOUD commands
 GCLOUD() {
     local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
     # stdout and stderr file names
@@ -297,6 +297,38 @@ GCLOUD() {
     return $?
 }
 export -f GCLOUD
+
+
+OCI_INIT() {
+
+    echo -e "oci setup config"
+    echo -e "-------\n"
+
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ account show
+    export az_id="${az_id:-$(jq -r '.id' /tmp/az_stdout.$$)}" 
+    export az_tenantDefaultDomain="${az_tenantDefaultDomain:-$(jq -r '.tenantDefaultDomain' /tmp/az_stdout.$$)}"
+    export az_user_name="${az_user_name:-$(jq -r '.user.name' /tmp/az_stdout.$$)}"
+
+    # set default location
+    if [[ -n "${CLOUD_LOCATION}" ]]; then 
+        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure ${CLOUD_LOCATION:+--defaults location="${CLOUD_LOCATION}"}
+    fi
+
+    # create resource group
+    if ! AZ group show --resource-group "${RG_NAME}" ; then
+        # multiples tags are defined correctly below.  NOT A MISTAKE
+        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ group create --resource-group "${RG_NAME}" \
+            --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}"
+    fi
+
+    # set default resource group
+    RG_NAME=$(jq -r .name /tmp/az_stdout.$$)
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure --defaults group="${RG_NAME}"    
+
+    # show billing for the resource group
+    echo -e "\nBilling for ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
+}
+export -f OCI_INIT
 
 DBX() {
     local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
@@ -628,6 +660,7 @@ put_secrets() {
     local secrets_key=${1:-"$DB_HOST"}
     local secretes_format=${2:-""}
     local key_value="${3:-""}"
+    local secrets_key="${secrets_key}"
 
     # create secret scope if does not exist
     if ! DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets list-secrets "${SECRETS_SCOPE}"; then
@@ -637,20 +670,28 @@ put_secrets() {
     fi
 
     if [[ -z "$key_value" ]] && [[ "${secretes_format}" == "json" ]]; then
+      secrets_key="${secrets_key}_json"
 key_value=$(yq -o json <<EOF   
-connection_type: $CONNECTION_TYPE
+version: v2
+db_type: $CONNECTION_TYPE
 catalog: $DB_CATALOG  
 schema: $DB_SCHEMA
-host: $DB_HOST  
+name: $DB_HOST  
 host_fqdn: $DB_HOST_FQDN  
 port: $DB_PORT  
 password: $USER_PASSWORD 
 user: $USER_USERNAME  
+replication_mode: both
+cloud: 
+  provider: ${CLOUD_DB_TYPE%%-*}
+  location: $CLOUD_LOCATION
+  resource_group: $RG_NAME
 dba:
   user: $DBA_USERNAME 
   password: $DBA_PASSWORD  
 EOF
 )
+
     else
         for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD CONNECTION_TYPE; do
             key_value="export ${k}='${!k}';$key_value"

@@ -63,7 +63,7 @@ if ! AWS rds describe-db-instances \
     # db.m5.large
     # db.t3.large not supported
     DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds create-db-instance \
-        --tags "Key=Owner,Value=${DBX_USERNAME}" "${REMOVE_AFTER:+Key=RemoveAfter,Value=${REMOVE_AFTER}}" \
+        --tags "Key=Owner,Value=${DBX_USERNAME}" "${REMOVE_AFTER:+Key=RemoveAfter,Value=${REMOVE_AFTER}}" "Key=AllowDowntime,Value=off" "Key=KeepAlive,Value=True"\
         --db-instance-identifier "$DB_HOST" \
         --db-name "$DB_CATALOG" \
         --db-instance-class db.m5.large \
@@ -175,32 +175,30 @@ if ! AWS rds describe-db-parameter-groups \
 
 fi
 
+aws_rds_build_db_param_group() {
+    local name=$1
+    local value=$2
+    local method=${3:-"pending-reboot"}
+    if [[ "$value" != "$(jq --arg name "$name" -r '.Parameters.[] | select(.ParameterName == $name) | .ParameterValue | ascii_downcase' /tmp/aws_parm_list.$$)" ]]; then
+        DB_PARAMS_CHANGED="${DB_PARAMS_CHANGED:+${DB_PARAMS_CHANGED},}{\"ParameterName\":\"$name\", \"ParameterValue\":\"$value\", \"ApplyMethod\": \"$method\"}"
+    fi
+}
+
 DB_PARAMS_CHANGED=""
- DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds describe-db-parameters \
-    --db-parameter-group-name "$DB_PARM_GRP_NAME" \
-    --query "Parameters[?ParameterName=='rds.logical_replication' || ParameterName=='rds.force_ssl' || ParameterName=='max_replication_slots' || ParameterName=='max_wal_senders' || ParameterName=='max_worker_processes']"
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_STDOUT=/tmp/aws_parm_list.$$ AWS rds describe-db-parameters --db-parameter-group-name "$DB_PARM_GRP_NAME" 
 
-if [[ "1" != "$(jq -r '.[] | select(.ParameterName=="rds.logical_replication") | .ParameterValue' /tmp/aws_stdout.$$)" ]]; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds modify-db-parameter-group \
-    --db-parameter-group-name "$DB_PARM_GRP_NAME" \
-    --parameters '[
-    {"ParameterName":"max_replication_slots",   "ParameterValue":"10",  "ApplyMethod": "pending-reboot"},
-    {"ParameterName":"max_wal_senders",         "ParameterValue":"15",  "ApplyMethod": "pending-reboot"}, 
-    {"ParameterName":"max_worker_processes",    "ParameterValue":"10",  "ApplyMethod": "pending-reboot"}, 
-    {"ParameterName":"rds.logical_replication", "ParameterValue":"1",   "ApplyMethod": "pending-reboot"}
-]'
-    (( DB_PARAMS_CHANGED += 1 ))
+aws_rds_build_db_param_group "max_replication_slots" "10" 
+aws_rds_build_db_param_group "max_wal_senders" "15"
+aws_rds_build_db_param_group "max_worker_processes" "10"
+aws_rds_build_db_param_group "max_slot_wal_keep_size" "10240"
+aws_rds_build_db_param_group "rds.force_ssl" "off"
+aws_rds_build_db_param_group "rds.logical_replication" "1"
+
+if [[ -n ${DB_PARAMS_CHANGED} ]]; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds modify-db-parameter-group --db-parameter-group-name "$DB_PARM_GRP_NAME" --parameters "[$DB_PARAMS_CHANGED]"
 fi
 
-if [[ "0" != "$(jq -r '.[] | select(.ParameterName=="rds.force_ssl") | .ParameterValue' /tmp/aws_stdout.$$)" ]]; then
-DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds modify-db-parameter-group \
-    --db-parameter-group-name "$DB_PARM_GRP_NAME" \
-    --parameters '[
-    {"ParameterName":"rds.force_ssl",           "ParameterValue":"off", "ApplyMethod": "pending-reboot"}
-]'
-    (( DB_PARAMS_CHANGED += 1 ))
-fi
-
+# is this required? DBParameterGroupName is what is currently setup but nothing has changed 
 if [[ "$DBParameterGroupName" != "$DB_PARM_GRP_NAME" ]]; then
     (( DB_PARAMS_CHANGED += 1 ))
 fi

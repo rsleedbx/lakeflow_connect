@@ -9,9 +9,9 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
-export DB_TYPE=azure-pg
-export DB_SUFFIX=azure-pg
-export CONNECTION_TYPE=POSTGRESQL
+export DB_TYPE=oci-oracle-19c
+export DB_SUFFIX=oci-oracle-19c
+export CONNECTION_TYPE=ORACLE
 export SOURCE_TYPE=$CONNECTION_TYPE
 
 # auto set the connection name
@@ -24,28 +24,28 @@ fi
 # #############################################################################
 # AZ Cloud
 
-AZ_INIT
+OCI_INIT
 
 # #############################################################################
 # export functions
 
 SQLCLI() {
-    PSQL "${@}"
+    ORACLECLI "${@}"
 }
 export -f SQLCLI
 
 SQLCLI_DBA() {
-    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" PSQL "${@}"
+    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" ORACLECLI "${@}"
 }
 export -f SQLCLI_DBA
 
 SQLCLI_USER() {
-    DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" PSQL "${@}"
+    DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" ORACLECLI "${@}"
 }
 export -f SQLCLI_USER
 
 password_reset_db() {
-    if ! AZ postgres flexible-server update -y -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
+    if ! AZ oracle flexible-server update -y -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
         cat /tmp/az_stderr.$$; return 1;
     fi
 }
@@ -53,7 +53,7 @@ export -f password_reset_db
 
 
 delete_db() {
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ oracle flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}"
 }
 export -f delete_db
 
@@ -67,8 +67,8 @@ for fw_rule in "${@}"; do
         host_min="$address"
         host_max="$address"
     fi
-    if ! AZ  postgres flexible-server firewall-rule show --rule-name "${fw_rule_name}" --name "${DB_HOST}" -g "${RG_NAME}"; then
-        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server firewall-rule create --rule-name "${fw_rule_name}" --name "$DB_HOST" -g "${RG_NAME}" --start-ip-address "${host_min}" --end-ip-address "${host_max}"
+    if ! AZ  oracle flexible-server firewall-rule show --rule-name "${fw_rule_name}" --name "${DB_HOST}" -g "${RG_NAME}"; then
+        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ oracle flexible-server firewall-rule create --rule-name "${fw_rule_name}" --name "$DB_HOST" -g "${RG_NAME}" --start-ip-address "${host_min}" --end-ip-address "${host_max}"
     fi
 done
 }
@@ -94,32 +94,9 @@ begin
         -- wait
 		raise notice '"'Counter %'"', counter;
 	    counter := counter + 1;
-        perform pg_sleep(1);
+        perform oracle_sleep(1);
     end loop;
 end;
-$$;
-'
-# below will fail on the gateway where the gateway waits for the commit to come
-export sql_dml_generator_does_not_work_with_gateway='
-set search_path='${DB_SCHEMA}';
-do $$
-declare 
-    counter integer := 0;
-begin
-    while counter >= 0 loop
-        -- intpk
-        insert into intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
-        delete from intpk where pk=(select min(pk) from intpk);
-        update intpk set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from intpk);
-        -- dtix
-        insert into dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
-        -- wait
-		raise notice '"'Counter %'"', counter;
-	    counter := counter + 1;
-        perform pg_sleep(1);
-    end loop;
-end;
-commit;
 $$;
 '
 
@@ -137,25 +114,29 @@ fi
 
 # get avail server if not specified
 if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
-    AZ postgres flexible-server list -g "${RG_NAME}"; then
+    AZ oracle flexible-server list -g "${RG_NAME}"; then
     
-    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.DBforPostgreSQL/flexibleServers")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.DBforOracle/flexibleServers")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
     if [[ -n $x1 && -n $x2 && -n $x3 && "$x1" == *"-${DB_SUFFIX}" ]]; then 
         DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; 
     fi
 fi
 
 # get avail catalog if not specified
+STATE[secrets_retrieved]=0
 if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]]; then
 
     # check if secrets exists for this host
     if get_secrets "$DB_HOST"; then
+        STATE[secrets_retrieved]=1
         echo -e "\n USING VALUES FROM SECRETS \v"
     fi
 fi
 
+STATE[secrets_valid]=1
 # secrets was empty or invalid.
 if [[ -z "${DBA_USERNAME}" || -z "$DB_HOST" || "$DB_HOST" != *"-${DB_SUFFIX}" ]]; then 
+    STATE[secrets_valid]=0
     DB_HOST="${DB_BASENAME}-${DB_SUFFIX}"; 
 fi  
 
@@ -163,7 +144,7 @@ if [[ -z "${DB_CATALOG}" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]]; then
     DB_CATALOG="${CATALOG_BASENAME}"
 fi  
 
-export DB_PORT=5432
+export DB_PORT=3306
 
 # #############################################################################
 # create sql server
@@ -173,43 +154,41 @@ echo -e   "------------------------------------\n"
 
 
 export DB_HOST_CREATED=""
-if ! AZ postgres flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
+if ! AZ oracle flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
 
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ provider register --wait --namespace Microsoft.DBforPostgreSQL
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ provider register --wait --namespace Microsoft.DBforOracle
 
     # sql server create does not support tags
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ oracle flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
-        --database "${DB_CATALOG}" \
-        --create-default-database Enabled \
-        --version 17 \
-        --node-count 1 \
+        --database-name "${DB_SCHEMA}" \
+        --version 8.4 \
         --public-access Enabled \
         --storage-size 32 \
         --tier Burstable \
         --sku-name Standard_B1ms \
         --admin-user "${DBA_USERNAME}" \
-        --admin-password "${DBA_PASSWORD}"
+        --admin-password "${DBA_PASSWORD}"  
 
     DB_HOST_CREATED="1"
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
         # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ postgres flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ oracle flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
         echo -e "\nDeleting ${DB_HOST} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi
 
     read -rd "\n" x1 x2 <<< "$(jq -r 'select(.host!=null) | .host, .username' /tmp/az_stdout.$$)"
     DB_HOST_FQDN=$x1; DBA_USERNAME="$x2";
 else
-    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'select(.fullyQualifiedDomainName!=null and .type=="Microsoft.DBforPostgreSQL/flexibleServers") | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
+    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'select(.fullyQualifiedDomainName!=null and .type=="Microsoft.DBforOracle/flexibleServers") | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
     if [[ -z $x1 || -z $x2 || -z $x3 ]]; then 
-        echo "$DB_HOST is not a Microsoft.DBforPostgreSQL/flexibleServers"
+        echo "$DB_HOST is not a Microsoft.DBforOracle/flexibleServers"
         return 1
     fi
     DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; 
 fi
 
-echo "AZ postgres ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${DB_HOST}/overview"
+echo "AZ oracle ${DB_HOST}: https://portal.oci.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.DBforOracle/flexibleServers/${DB_HOST}/overview"
 echo ""
 
 # #############################################################################
@@ -221,12 +200,12 @@ echo -e "------------------------------------------------\n"
 
 # convert CIDR to range 
 
-DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server firewall-rule list -n "${DB_HOST}" -g "${RG_NAME}"
+DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server firewall-rule list -n "${DB_HOST}" -g "${RG_NAME}"
 if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
     firewall_rule_add "${DB_FIREWALL_CIDRS[@]}"
 fi
 
-echo -e "\nAZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${DB_HOST}/networking \n"
+echo -e "\nAZ sql server firewall-rule ${DB_HOST}: https://portal.oci.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.DBforOracle/flexibleServers/${DB_HOST}/networking \n"
 
 # #############################################################################
 # Check password
@@ -235,64 +214,63 @@ echo -e "\nValidate or reset root password.  Could take 5min if resetting"
 echo -e   "--------------------------------------------------------------\n"
 
 export DB_PASSWORD_CHANGED=""
-if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" TEST_DB_CONNECT; then
+if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="oracle" TEST_DB_CONNECT; then
     if [[ -n "$DB_HOST_CREATED" ]]; then
         echo "can't connect to newly created host"
-        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
+        cat /tmp/oracle_stdout.$$ /tmp/oracle_stderr.$$; return 1;
     fi
 
     password_reset_db
 
     DB_PASSWORD_CHANGED="1"
-    if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" TEST_DB_CONNECT; then
-        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
+    if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="oracle" TEST_DB_CONNECT; then
+        cat /tmp/oracle_stdout.$$ /tmp/oracle_stderr.$$; return 1;
     fi
 fi
 
 # #############################################################################
-# create catalog if not exists 
+# create catalog does not exist for Oracle
 
-echo -e "\nCreate catalog if not exists" 
-echo -e   "----------------------------\n"
-
-# get avail catalog if not specified
-DB_CATALOG="postgres" SQLCLI_DBA -c "select datname from pg_database where datname not in ('azure_maintenance', 'azure_sys', 'template0', 'template1', 'postgres');" </dev/null
-
-# use existing catalog
-if [[ -n "$DB_HOST" ]] && [[ -z "${DB_CATALOG}" || "$DB_CATALOG" == "${CATALOG_BASENAME}" ]] && grep -q "^${DB_CATALOG}$" /tmp/psql_stdout.$$ ; then 
-    DB_CATALOG=$(cat /tmp/psql_stdout.$$)
-fi 
-
-# create if catalog does not exist
-if ! grep -q "^$DB_CATALOG" /tmp/psql_stdout.$$; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="postgres" SQLCLI_DBA -c "create database ${DB_CATALOG};"
-fi
 
 # #############################################################################
 # set replication
 
-echo -e "\nEnable wal_level=logical and require_secure_transport=off" 
-echo -e   "---------------------------------------------------------\n"
+echo -e "\nEnable binlog_row_image=full, binlog_format=row and require_secure_transport=off" 
+echo -e   "--------------------------------------------------------------------------------\n"
 
 PARAMETER_SET=""
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_STDOUT=/tmp/az_parm_list.$$ AZ postgres flexible-server parameter list --server-name "$DB_HOST"
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_STDOUT=/tmp/az_parm_list.$$ AZ oracle flexible-server parameter list --server-name "$DB_HOST"
 
-# cdc requires logical 
-if [[ "logical" != "$(jq -r '.[] | select(.name == "wal_level") | .value | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server parameter set --server-name "$DB_HOST" --name  wal_level --value logical
+# lakeflow connect 
+if [[ "on" == "$(jq -r '.[] | select(.name == "sql_generate_invisible_primary_key") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server parameter set --server-name "$DB_HOST" --name  sql_generate_invisible_primary_key --value OFF
+    PARAMETER_SET="1"
+fi
+
+if [[ "full" != "$(jq -r '.[] | select(.name == "binlog_row_image") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server parameter set --server-name "$DB_HOST" --name  binlog_row_image --value full
+    PARAMETER_SET="1"
+fi
+
+if [[ "row" != "$(jq -r '.[] | select(.name == "binlog_format") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server parameter set --server-name "$DB_HOST" --name  binlog_format --value row
     PARAMETER_SET="1"
 fi
 
 # lakeflow connect expects ssl disabled for now
-if [[ "off" != "$(jq -r '.[] | select(.name == "require_secure_transport") | .value | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server parameter set --server-name "$DB_HOST" --name  require_secure_transport --value off
+if [[ "off" != "$(jq -r '.[] | select(.name == "require_secure_transport") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server parameter set --server-name "$DB_HOST" --name  require_secure_transport --value off
     PARAMETER_SET="1"
 fi
 
+if [[ 604800 -gt "$(jq -r '.[] | select(.name == "binlog_expire_logs_seconds") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server parameter set --server-name "$DB_HOST" --name  binlog_expire_logs_seconds --value 604800
+    PARAMETER_SET="1"
+fi
 
 # restart to take effect
 if [[ "$PARAMETER_SET" == "1" ]]; then 
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server restart --name "$DB_HOST"
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server restart --name "$DB_HOST"
 fi
 
 # #############################################################################

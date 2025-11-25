@@ -11,6 +11,7 @@ fi
 
 export DB_TYPE=oci-oracle-19c
 export DB_SUFFIX=oci-oracle-19c
+export DB_CLOUD=oci
 export CONNECTION_TYPE=ORACLE
 export SOURCE_TYPE=$CONNECTION_TYPE
 
@@ -22,7 +23,7 @@ if [[ "${WHOAMI}" == "lfcddemo" ]] && [[ -z "${CONNECTION_NAME}" || "${CONNECTIO
 fi
 
 # #############################################################################
-# AZ Cloud
+# OCI Cloud
 
 OCI_INIT
 
@@ -45,7 +46,7 @@ SQLCLI_USER() {
 export -f SQLCLI_USER
 
 password_reset_db() {
-    if ! AZ oracle flexible-server update -y -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
+    if ! OCI oracle flexible-server update -y -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
         cat /tmp/az_stderr.$$; return 1;
     fi
 }
@@ -53,7 +54,7 @@ export -f password_reset_db
 
 
 delete_db() {
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ oracle flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" OCI oracle flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}"
 }
 export -f delete_db
 
@@ -67,8 +68,8 @@ for fw_rule in "${@}"; do
         host_min="$address"
         host_max="$address"
     fi
-    if ! AZ  oracle flexible-server firewall-rule show --rule-name "${fw_rule_name}" --name "${DB_HOST}" -g "${RG_NAME}"; then
-        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ oracle flexible-server firewall-rule create --rule-name "${fw_rule_name}" --name "$DB_HOST" -g "${RG_NAME}" --start-ip-address "${host_min}" --end-ip-address "${host_max}"
+    if ! OCI  oracle flexible-server firewall-rule show --rule-name "${fw_rule_name}" --name "${DB_HOST}" -g "${RG_NAME}"; then
+        DB_EXIT_ON_ERROR="PRINT_EXIT" OCI oracle flexible-server firewall-rule create --rule-name "${fw_rule_name}" --name "$DB_HOST" -g "${RG_NAME}" --start-ip-address "${host_min}" --end-ip-address "${host_max}"
     fi
 done
 }
@@ -114,8 +115,13 @@ fi
 
 # get avail server if not specified
 if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
-    AZ oracle flexible-server list -g "${RG_NAME}"; then
-    
+    OCI db autonomous-database list; then
+
+if ! DB_STDOUT="/tmp/oci_db_list.$$" OCI db autonomous-database list --query "data[?\"display-name\" == '$DB_HOST']" | jq -e '.[] | ."display-name"' /tmp/oci_db_list.$$; then
+    echo "create db"
+fi
+
+
     read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.DBforOracle/flexibleServers")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
     if [[ -n $x1 && -n $x2 && -n $x3 && "$x1" == *"-${DB_SUFFIX}" ]]; then 
         DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; 
@@ -144,7 +150,7 @@ if [[ -z "${DB_CATALOG}" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]]; then
     DB_CATALOG="${CATALOG_BASENAME}"
 fi  
 
-export DB_PORT=3306
+export DB_PORT=1522
 
 # #############################################################################
 # create sql server
@@ -154,26 +160,23 @@ echo -e   "------------------------------------\n"
 
 
 export DB_HOST_CREATED=""
-if ! AZ oracle flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
+if ! OCI db autonomous-database list; then
 
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ provider register --wait --namespace Microsoft.DBforOracle
+    DB_EXIT_ON_ERROR="PRINT_EXIT" OCI provider register --wait --namespace Microsoft.DBforOracle
 
     # sql server create does not support tags
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ oracle flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
-        --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
-        --database-name "${DB_SCHEMA}" \
-        --version 8.4 \
-        --public-access Enabled \
-        --storage-size 32 \
-        --tier Burstable \
-        --sku-name Standard_B1ms \
-        --admin-user "${DBA_USERNAME}" \
-        --admin-password "${DBA_PASSWORD}"  
+    DB_EXIT_ON_ERROR="PRINT_EXIT" OCI db autonomous-database create \
+        --is-free-tier TRUE \
+        --db-name $DB_HOST \
+        --admin-password $DBA_PASSWORD \
+        --cpu-core-count 1 \
+        --data-storage-size-in-tbs 1 \
+        --db-workload ATP # or ADW for Autonomous Data Warehouse
 
     DB_HOST_CREATED="1"
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
         # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ oracle flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && OCI oracle flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
         echo -e "\nDeleting ${DB_HOST} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi
 
@@ -188,8 +191,10 @@ else
     DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; 
 fi
 
-echo "AZ oracle ${DB_HOST}: https://portal.oci.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.DBforOracle/flexibleServers/${DB_HOST}/overview"
+echo "OCI oracle ${DB_HOST}: https://portal.oci.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.DBforOracle/flexibleServers/${DB_HOST}/overview"
 echo ""
+
+return 1
 
 # #############################################################################
 
@@ -200,7 +205,7 @@ echo -e "------------------------------------------------\n"
 
 # convert CIDR to range 
 
-DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server firewall-rule list -n "${DB_HOST}" -g "${RG_NAME}"
+DB_EXIT_ON_ERROR="PRINT_EXIT"  OCI oracle flexible-server firewall-rule list -n "${DB_HOST}" -g "${RG_NAME}"
 if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
     firewall_rule_add "${DB_FIREWALL_CIDRS[@]}"
 fi
@@ -239,38 +244,38 @@ echo -e "\nEnable binlog_row_image=full, binlog_format=row and require_secure_tr
 echo -e   "--------------------------------------------------------------------------------\n"
 
 PARAMETER_SET=""
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_STDOUT=/tmp/az_parm_list.$$ AZ oracle flexible-server parameter list --server-name "$DB_HOST"
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_STDOUT=/tmp/az_parm_list.$$ OCI oracle flexible-server parameter list --server-name "$DB_HOST"
 
 # lakeflow connect 
 if [[ "on" == "$(jq -r '.[] | select(.name == "sql_generate_invisible_primary_key") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server parameter set --server-name "$DB_HOST" --name  sql_generate_invisible_primary_key --value OFF
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  OCI oracle flexible-server parameter set --server-name "$DB_HOST" --name  sql_generate_invisible_primary_key --value OFF
     PARAMETER_SET="1"
 fi
 
 if [[ "full" != "$(jq -r '.[] | select(.name == "binlog_row_image") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server parameter set --server-name "$DB_HOST" --name  binlog_row_image --value full
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  OCI oracle flexible-server parameter set --server-name "$DB_HOST" --name  binlog_row_image --value full
     PARAMETER_SET="1"
 fi
 
 if [[ "row" != "$(jq -r '.[] | select(.name == "binlog_format") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server parameter set --server-name "$DB_HOST" --name  binlog_format --value row
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  OCI oracle flexible-server parameter set --server-name "$DB_HOST" --name  binlog_format --value row
     PARAMETER_SET="1"
 fi
 
 # lakeflow connect expects ssl disabled for now
 if [[ "off" != "$(jq -r '.[] | select(.name == "require_secure_transport") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server parameter set --server-name "$DB_HOST" --name  require_secure_transport --value off
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  OCI oracle flexible-server parameter set --server-name "$DB_HOST" --name  require_secure_transport --value off
     PARAMETER_SET="1"
 fi
 
 if [[ 604800 -gt "$(jq -r '.[] | select(.name == "binlog_expire_logs_seconds") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server parameter set --server-name "$DB_HOST" --name  binlog_expire_logs_seconds --value 604800
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  OCI oracle flexible-server parameter set --server-name "$DB_HOST" --name  binlog_expire_logs_seconds --value 604800
     PARAMETER_SET="1"
 fi
 
 # restart to take effect
 if [[ "$PARAMETER_SET" == "1" ]]; then 
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ oracle flexible-server restart --name "$DB_HOST"
+    DB_EXIT_ON_ERROR="PRINT_EXIT"  OCI oracle flexible-server restart --name "$DB_HOST"
 fi
 
 # #############################################################################
@@ -286,4 +291,4 @@ fi
 echo -e "\nResource list"
 echo -e   "-------------\n"
 
-az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
+oci resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table

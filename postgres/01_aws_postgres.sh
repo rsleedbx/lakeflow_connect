@@ -105,7 +105,12 @@ echo -e "\nCreating permissive firewall rules if not exists"
 echo -e   "------------------------------------------------\n"
 
 firewall_rule() {
-    printf -v DB_FIREWALL_CIDRS_CSV "{CidrIp='%s'}," "${DB_FIREWALL_CIDRS[@]}"
+
+    if [[ ${DB_FIREWALL_CIDRS} != '0.0.0.0/0' ]]; then
+        printf -v DB_FIREWALL_CIDRS_CSV "{CidrIp='%s'}," "${DB_FIREWALL_CIDRS[@]}"
+    else
+        printf -v DB_FIREWALL_CIDRS_CSV "{CidrIp='%s'}," $(curl https://raw.githubusercontent.com/databricks-it/ip-whitelist/refs/heads/main/vpn-whitelist.json?token=GHSAT0AAAAAADOIHC7KHVM4JYC4VQ6EGKX62IKFUTQ | jq -r '[.prisma | .[] | .ip_ranges | .[]] | sort | unique | .[]' | bin/optimize_cidrs.py)
+    fi
     DB_FIREWALL_CIDRS_CSV="${DB_FIREWALL_CIDRS_CSV%,}"  # remove trailing ,
 
     # https://docs.aws.amazon.com/cli/latest/reference/ec2/authorize-security-group-ingress.html
@@ -191,7 +196,7 @@ aws_rds_build_db_param_group "max_replication_slots" "10"
 aws_rds_build_db_param_group "max_wal_senders" "15"
 aws_rds_build_db_param_group "max_worker_processes" "10"
 aws_rds_build_db_param_group "max_slot_wal_keep_size" "10240"
-aws_rds_build_db_param_group "rds.force_ssl" "off"
+aws_rds_build_db_param_group "rds.force_ssl" "0"
 aws_rds_build_db_param_group "rds.logical_replication" "1"
 
 if [[ -n ${DB_PARAMS_CHANGED} ]]; then

@@ -304,31 +304,29 @@ OCI_INIT() {
     echo -e "oci setup config"
     echo -e "-------\n"
 
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ account show
-    export az_id="${az_id:-$(jq -r '.id' /tmp/az_stdout.$$)}" 
-    export az_tenantDefaultDomain="${az_tenantDefaultDomain:-$(jq -r '.tenantDefaultDomain' /tmp/az_stdout.$$)}"
-    export az_user_name="${az_user_name:-$(jq -r '.user.name' /tmp/az_stdout.$$)}"
-
-    # set default location
-    if [[ -n "${CLOUD_LOCATION}" ]]; then 
-        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure ${CLOUD_LOCATION:+--defaults location="${CLOUD_LOCATION}"}
-    fi
-
-    # create resource group
-    if ! AZ group show --resource-group "${RG_NAME}" ; then
-        # multiples tags are defined correctly below.  NOT A MISTAKE
-        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ group create --resource-group "${RG_NAME}" \
-            --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}"
-    fi
-
-    # set default resource group
-    RG_NAME=$(jq -r .name /tmp/az_stdout.$$)
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure --defaults group="${RG_NAME}"    
-
-    # show billing for the resource group
-    echo -e "\nBilling for ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
 }
 export -f OCI_INIT
+
+# display OCI commands
+OCI() {
+    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
+    # stdout and stderr file names
+    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/oci_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/oci_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local RC
+
+    PWMASK="$@"
+    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
+    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+    echo -n oci "${PWMASK}"
+    oci "$@" >${DB_STDOUT} 2>${DB_STDERR}
+
+    RC=$?
+    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
+    return $?
+}
+export -f OCI
 
 DBX() {
     local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
@@ -419,7 +417,7 @@ PSQL() {
     local DB_USERNAME=${DB_USERNAME:-${USER_USERNAME}}
     local DB_PASSWORD=${DB_PASSWORD:-${USER_PASSWORD}}
     local DB_HOST_FQDN=${DB_HOST_FQDN}
-    local DB_PORT=${DB_PORT:-${1433}}
+    local DB_PORT=${DB_PORT:-${5432}}
     local DB_CATALOG=${DB_CATALOG:-"postgres"}
     local DB_LOGIN_TIMEOUT=${DB_LOGIN_TIMEOUT:-10}
     local DB_SSLMODE=${DB_SSLMODE:-"allow"}

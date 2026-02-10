@@ -694,7 +694,8 @@ put_secrets() {
       secrets_key="${secrets_key}_json"
 key_value=$(yq -o json <<EOF   
 version: v2
-db_type: $CONNECTION_TYPE
+db_type: $DB_TYPE
+connection_type: $CONNECTION_TYPE
 catalog: $DB_CATALOG  
 schema: $DB_SCHEMA
 name: $DB_HOST  
@@ -757,14 +758,14 @@ connection_spec_from_json() {
 
     OUTPUT[conn_create_json]=$(echo "${OUTPUT[secret_value_json]}" | jq --arg name "$CONNECTION_NAME" --arg scope "$SECRETS_SCOPE" '{
   name: ($name),
-  connection_type: (.db_type // "SQLSERVER" | ascii_upcase),
+  connection_type: ((.connection_type // .db_type // "SQLSERVER") | ascii_upcase),
   comment: ("{\"secrets\": {\"scope\": \"" + $scope + "\", \"key\": \"" + .name + "\"}}"),
   options: ({
     host: .host_fqdn,
     port: (.port | tostring),
     user: .user,
     password: .password
-  } + if (.db_type // "SQLSERVER" | ascii_upcase) == "SQLSERVER" then {trustServerCertificate: "true"} else {} end)
+  } + if ((.connection_type // .db_type // "SQLSERVER") | ascii_upcase) == "SQLSERVER" then {trustServerCertificate: "true"} else {} end)
 }'
     )
 

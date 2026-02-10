@@ -24,61 +24,19 @@ fi
 # #############################################################################
 # export functions
 
+# Override SQLCLI to use SQLCMD for SQL Server
 SQLCLI() {
-    local DB_USERNAME=${DB_USERNAME:-${USER_USERNAME}}
-    local DB_PASSWORD=${DB_PASSWORD:-${USER_PASSWORD}}
-    local DB_HOST_FQDN=${DB_HOST_FQDN}
-    local DB_PORT=${DB_PORT:-${1433}}
-    local DB_CATALOG=${DB_CATALOG:-"master"}
-    local DB_LOGIN_TIMEOUT=${DB_LOGIN_TIMEOUT:-10}
-    local DB_URL=${DB_URL:-""}
-    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
-    # stdout and stderr file names
-    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
-    local DB_STDOUT=${DB_STDOUT:-"/tmp/sqlcmd_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-    local DB_STDERR=${DB_STDERR:-"/tmp/sqlcmd_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-
-    PWMASK="${*}"
-    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
-    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
-    PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
-    PWMASK="${PWMASK//$DBA_USERNAME/\$DBA_USERNAME}"
-    PWMASK="${PWMASK//$USER_USERNAME/\$USER_USERNAME}"
-    PWMASK="${PWMASK//$DB_CATALOG/\$DB_CATALOG}"
-
-    echo sqlcmd "${DB_USERNAME}:/${DB_CATALOG}" "${PWMASK}" 
-
-    if [[ -t 0 ]]; then
-        # stdin is attached
-        sqlcmd -d "$DB_CATALOG" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l "${DB_LOGIN_TIMEOUT}" "${@}"
-    else
-        # running in batch mode
-        sqlcmd -d "$DB_CATALOG" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l "${DB_LOGIN_TIMEOUT}" -h -1 "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
-    fi
-    RC=$?
-    if [[ "$RC" != "0" && "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
-        cat "${DB_STDOUT}" "${DB_STDERR}"
-        return $RC
-    elif [[ "$RC" != "0" && "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
-        cat "${DB_STDOUT}" "${DB_STDERR}"
-        kill -INT $$
-    elif [[ "$RC" == "0" && "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" ]]; then 
-        if [[ ! -s "${DB_STDOUT}" ]]; then 
-            return 1
-        else
-            return 0
-        fi
-    else
-        return $RC
-    fi
+    SQLCMD "${@}"
 }
 export -f SQLCLI
 
+# Helper to run SQL as DBA user
 SQLCLI_DBA() {
     DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="" SQLCLI "${@}"
 }
 export -f SQLCLI_DBA
 
+# Helper to run SQL as regular user
 SQLCLI_USER() {
     DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" SQLCLI "${@}"
 }
@@ -171,50 +129,25 @@ delete_vnet() {
 echo -e "\nCreating network if not exists \n"
 
 if ! AZ network vnet subnet show --name $subnet --vnet-name $vNet; then
-    if ! AZ network vnet create --name $vNet -g "${RG_NAME}" --location "$CLOUD_LOCATION" --address-prefixes 10.0.0.0/16; then 
-        cat /tmp/az_stderr.$$; return 1 
-    fi
-
-    if ! AZ network vnet subnet create --name $subnet -g "${RG_NAME}" --vnet-name $vNet --address-prefixes 10.0.0.0/24 --delegations Microsoft.Sql/managedInstances; then 
-        cat /tmp/az_stderr.$$; return 1 
-    fi
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network vnet create --name $vNet -g "${RG_NAME}" --location "$CLOUD_LOCATION" --address-prefixes 10.0.0.0/16
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network vnet subnet create --name $subnet -g "${RG_NAME}" --vnet-name $vNet --address-prefixes 10.0.0.0/24 --delegations Microsoft.Sql/managedInstances
 fi
 
-AZ network nsg rule list --nsg-name $nsg  
-if [[ $? != 0 ]]; then
-    AZ network nsg create --name $nsg -g "${RG_NAME}" --location "$CLOUD_LOCATION"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network nsg rule create --name "allow_management_inbound" --nsg-name $nsg --priority 100 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges 9000 9003 1438 1440 1452 --direction Inbound --protocol Tcp --source-address-prefixes "*" --source-port-ranges "*"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network nsg rule create --name "allow_misubnet_inbound" --nsg-name $nsg --priority 200 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Inbound --protocol "*" --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network nsg rule create --name "allow_health_probe_inbound" --nsg-name $nsg --priority 300 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Inbound --protocol "*" --source-address-prefixes AzureLoadBalancer --source-port-ranges "*"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network nsg rule create --name "allow_management_outbound" --nsg-name $nsg --priority 1100 -g "${RG_NAME}" --access Allow --destination-address-prefixes AzureCloud --destination-port-ranges 443 12000 --direction Outbound --protocol Tcp --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network nsg rule create --name "allow_misubnet_outbound" --nsg-name $nsg --priority 200 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Outbound --protocol "*" --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
+if ! AZ network nsg rule list --nsg-name $nsg; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg create --name $nsg -g "${RG_NAME}" --location "$CLOUD_LOCATION"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg rule create --name "allow_management_inbound" --nsg-name $nsg --priority 100 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges 9000 9003 1438 1440 1452 --direction Inbound --protocol Tcp --source-address-prefixes "*" --source-port-ranges "*"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg rule create --name "allow_misubnet_inbound" --nsg-name $nsg --priority 200 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Inbound --protocol "*" --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg rule create --name "allow_health_probe_inbound" --nsg-name $nsg --priority 300 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Inbound --protocol "*" --source-address-prefixes AzureLoadBalancer --source-port-ranges "*"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg rule create --name "allow_management_outbound" --nsg-name $nsg --priority 1100 -g "${RG_NAME}" --access Allow --destination-address-prefixes AzureCloud --destination-port-ranges 443 12000 --direction Outbound --protocol Tcp --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg rule create --name "allow_misubnet_outbound" --nsg-name $nsg --priority 200 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Outbound --protocol "*" --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"
 fi
 
 
-AZ network route-table route list --route-table-name $route 
-if [[ $? != 0 ]]; then
-    AZ network route-table create --name $route -g "${RG_NAME}" --location "$CLOUD_LOCATION"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network route-table route create --address-prefix 0.0.0.0/0 --name "primaryToMIManagementService" --next-hop-type Internet -g "${RG_NAME}" --route-table-name $route  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network route-table route create --address-prefix 10.0.0.0/24 --name "ToLocalClusterNode" --next-hop-type VnetLocal -g "${RG_NAME}" --route-table-name $route  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network vnet subnet update --name $subnet --network-security-group $nsg --route-table $route --vnet-name $vNet -g "${RG_NAME}"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
+if ! AZ network route-table route list --route-table-name $route; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network route-table create --name $route -g "${RG_NAME}" --location "$CLOUD_LOCATION"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network route-table route create --address-prefix 0.0.0.0/0 --name "primaryToMIManagementService" --next-hop-type Internet -g "${RG_NAME}" --route-table-name $route
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network route-table route create --address-prefix 10.0.0.0/24 --name "ToLocalClusterNode" --next-hop-type VnetLocal -g "${RG_NAME}" --route-table-name $route
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network vnet subnet update --name $subnet --network-security-group $nsg --route-table $route --vnet-name $vNet -g "${RG_NAME}"
 fi
 
 # #############################################################################
@@ -307,7 +240,7 @@ echo -e "AZ sql midb ${DB_CATALOG}: https://portal.azure.com/#@${az_tenantDefaul
 
 echo -e "Creating permissive firewall rules if not exists \n"
 
-if ! AZ network nsg rule list --nsg-name "$nsg" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
+DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg rule list --nsg-name "$nsg" -g "${RG_NAME}"
 if [[ "0" == "$(jq 'map_values(select(.priority==150)) | length' /tmp/az_stdout.$$)" ]]; then
     if ! AZ network nsg rule show --name "0_0_0_0_0" --nsg-name "$nsg" -g "${RG_NAME}"; then
         if ! AZ network nsg rule create --name "0_0_0_0_0" --nsg-name "$nsg" -g "${RG_NAME}"\
@@ -340,7 +273,8 @@ if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT
 
     DB_PASSWORD_CHANGED="1"
     if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
-        cat /tmp/az_stderr.$$; return 1;
+        cat /tmp/az_stderr.$$
+        return 1
     fi
 fi
 
@@ -354,5 +288,5 @@ fi
 # #############################################################################
 echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
 
-az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
+AZ resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # error out when undeclared variable is used
-set -u 
+set -u
 
 # must be sourced for exports to continue to the next script
 if [ "$0" == "$BASH_SOURCE" ]; then
@@ -608,6 +608,16 @@ TEST_DB_CONNECT() {
 # #############################################################################
 # retrieve setting from secrets if exists
 
+secrets_set_all_read() {
+    local SECRETS_SCOPE="$SECRETS_SCOPE"
+    local DB_EXIT_ON_ERROR="${DB_EXIT_ON_ERROR:-PRINT_RETURN}"
+
+    if ! DB_EXIT_ON_ERROR="${DB_EXIT_ON_ERROR}" DBX secrets put-acl "$SECRETS_SCOPE" "account users" READ; then
+        # try with users
+        DB_EXIT_ON_ERROR="${DB_EXIT_ON_ERROR}" DBX secrets put-acl "$SECRETS_SCOPE" "users" READ
+    fi
+}
+
 # return 0 to save
 # return 1 to not save
 should_save_secrets() {
@@ -653,6 +663,19 @@ get_secrets() {
 
 }
 export -f get_secrets
+
+json_to_associative_array() {
+    local -n json_to_associative_array_credentials="$1"  # nameref to associative array (passed by name)
+    local json_file="$json_file"                         # path to JSON file
+
+    while IFS='=' read -r key value; do
+        value="${value%\'}"                               # strip trailing single quote
+        value="${value#\'}"                               # strip leading single quote
+        echo "$key=$value"
+        json_to_associative_array_credentials["$key"]="$value"
+    done < <(yq -o=shell "$json_file")
+}
+export -f json_to_associative_array
 
 put_secrets() {
     local secrets_key=${1:-"$DB_HOST"}
@@ -722,41 +745,88 @@ SQLCLI_USER() {
 export -f SQLCLI_USER
 
 # #############################################################################
+# connection 
 
-connection_create_json_from_secrets() {
-jq --arg name "$1" '{
+# input is stdin, $1=connection name $2=SECRETS_SCOPE
+# output is at STATE[conn_create_json] STATE[conn_patch_json]
+connection_spec_from_json() {
+    local -n OUTPUT="${1}"
+
+    local CONNECTION_NAME="${CONNECTION_NAME}"
+    local SECRETS_SCOPE="${SECRETS_SCOPE}"
+
+    OUTPUT[conn_create_json]=$(echo "${OUTPUT[secret_value_json]}" | jq --arg name "$CONNECTION_NAME" --arg scope "$SECRETS_SCOPE" '{
   name: ($name),
-  connection_type: (.connection_type // "SQLSERVER"),
-  comment: ("{\"catalog\": \"" + .catalog + "\", \"schema\": \"" + .schema + "\", \"secrets\": {\"scope\": \"lfcddemo\", \"key\": \"" + .host + "\"}}"),
+  connection_type: (.db_type // "SQLSERVER" | ascii_upcase),
+  comment: ("{\"secrets\": {\"scope\": \"" + $scope + "\", \"key\": \"" + .name + "\"}}"),
   options: ({
     host: .host_fqdn,
     port: (.port | tostring),
     user: .user,
     password: .password
-  } + if (.connection_type // "SQLSERVER") == "SQLSERVER" then {trustServerCertificate: "true"} else {} end)
+  } + if (.db_type // "SQLSERVER" | ascii_upcase) == "SQLSERVER" then {trustServerCertificate: "true"} else {} end)
 }'
-}
-export -f connection_create_json_from_secrets
+    )
 
-connection_spec_create() {
-STATE[conn_create_json]=$(yq -o json <<EOF
+    OUTPUT[conn_patch_json]=$(echo "${OUTPUT[conn_create_json]}" | jq 'del(.connection_type)')
+}
+export -f connection_spec_from_json
+
+connection_spec_from_env() {
+    local -n OUTPUT="${1}"
+
+    OUTPUT[conn_create_json]=$(echo "${OUTPUT[secret_value_env]}" | yq -o json <<EOF
 name: $CONNECTION_NAME
 connection_type: $CONNECTION_TYPE
-comment: '{"catalog": "$DB_CATALOG", "schema": "$DB_SCHEMA", "secrets": {"scope": "$SECRETS_SCOPE", "key": "$DB_HOST"}}'
+comment: '{"secrets": {"scope": "$SECRETS_SCOPE", "key": "$DB_HOST"}}'
 options: 
     host: $DB_HOST_FQDN
     port: $DB_PORT
     user: $USER_USERNAME
     password: $USER_PASSWORD
-    $(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then printf "trustServerCertificate: true"; fi)
+    $(if [[ "${CONNECTION_TYPE^^}" == "SQLSERVER" ]]; then printf "trustServerCertificate: true"; fi)
 EOF
 )
-STATE[conn_patch_json]=$(echo "${STATE[conn_create_json]}" | jq 'del(.connection_type)')
+OUTPUT[conn_patch_json]=$(echo "${OUTPUT[conn_create_json]}" | jq 'del(.connection_type)')
 }
-export -f connection_spec_create
+export -f connection_spec_from_env
+
+# allow all users to READ (use connection)
+connection_set_all_read() {
+    local CONNECTION_NAME="${CONNECTION_NAME}"
+    local connection_permission='{ "changes": [ { "add": [ "USE_CONNECTION" ], "principal": "account users" } ] }'
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/permissions/connection/"${CONNECTION_NAME}" --json "$connection_permission"
+}
+export -f connection_set_all_read
+
+
+connection_create_or_replace() {
+    local -n OUTPUT="${1}"
+    #if [[ -z "${OUTPUT[*]}" ]]; then echo "connection_create_or_replace \$1 not specified"; kill -INT $$; fi 
+
+    # get the connection name
+    local CONNECTION_NAME="$(echo "${OUTPUT[conn_create_json]}" | jq -r '.name')"
+    OUTPUT[connection_created]=""
+
+    # create or replace
+    if ! DBX connections get "$CONNECTION_NAME"; then
+        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api post /api/2.1/unity-catalog/connections --json "${OUTPUT[conn_create_json]}"
+    else 
+        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/connections/"${CONNECTION_NAME}" --json "${OUTPUT[conn_patch_json]}"
+    fi
+
+    # save the connection id
+    CONNECTION_ID=$(jq -r '.connection_id' /tmp/dbx_stdout.$$)
+    OUTPUT[CONNECTION_ID]="${CONNECTION_ID}"
+    export CONNECTION_ID
+
+    # make connection avail to all
+    CONNECTION_NAME="$CONNECTION_NAME" connection_set_all_read 
+}
+export -f connection_create_or_replace
+
 
 # make sure executables are there are with correct versions
-
 for exe in curl ipcalc pwgen ttyd tmux wget; do
     if ! command -v $exe &> /dev/null; then
     echo -e "\n

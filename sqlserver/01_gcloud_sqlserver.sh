@@ -33,62 +33,21 @@ fi
 
 # #############################################################################
 # export functions
+# Note: SQLCLI wraps the database-specific CLI (SQLCMD for SQL Server)
 
+# Override SQLCLI to use SQLCMD for SQL Server
 SQLCLI() {
-    local DB_USERNAME=${DB_USERNAME:-${USER_USERNAME}}
-    local DB_PASSWORD=${DB_PASSWORD:-${USER_PASSWORD}}
-    local DB_HOST_FQDN=${DB_HOST_FQDN}
-    local DB_PORT=${DB_PORT:-${1433}}
-    local DB_CATALOG=${DB_CATALOG:-"master"}
-    local DB_LOGIN_TIMEOUT=${DB_LOGIN_TIMEOUT:-10}
-    local DB_URL=${DB_URL:-""}
-    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
-    # stdout and stderr file names
-    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
-    local DB_STDOUT=${DB_STDOUT:-"/tmp/sqlcmd_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-    local DB_STDERR=${DB_STDERR:-"/tmp/sqlcmd_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-
-    PWMASK="${*}"
-    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
-    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
-    PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
-    PWMASK="${PWMASK//$DBA_USERNAME/\$DBA_USERNAME}"
-    PWMASK="${PWMASK//$USER_USERNAME/\$USER_USERNAME}"
-    PWMASK="${PWMASK//$DB_CATALOG/\$DB_CATALOG}"
-
-    echo sqlcmd "${DB_USERNAME}:/${DB_CATALOG}" "${PWMASK}" 
-
-    if [[ -t 0 ]]; then
-        # stdin is attached
-        sqlcmd -d "$DB_CATALOG" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l "${DB_LOGIN_TIMEOUT}" "${@}"
-    else
-        # running in batch mode
-        sqlcmd -d "$DB_CATALOG" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l "${DB_LOGIN_TIMEOUT}" -h -1 "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
-    fi
-    RC=$?
-    if [[ "$RC" != "0" && "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
-        cat "${DB_STDOUT}" "${DB_STDERR}"
-        return $RC
-    elif [[ "$RC" != "0" && "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
-        cat "${DB_STDOUT}" "${DB_STDERR}"
-        kill -INT $$
-    elif [[ "$RC" == "0" && "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" ]]; then 
-        if [[ ! -s "${DB_STDOUT}" ]]; then 
-            return 1
-        else
-            return 0
-        fi
-    else
-        return $RC
-    fi
+    SQLCMD "${@}"
 }
 export -f SQLCLI
 
+# Helper to run SQL as DBA user
 SQLCLI_DBA() {
     DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="" SQLCLI "${@}"
 }
 export -f SQLCLI_DBA
 
+# Helper to run SQL as regular user
 SQLCLI_USER() {
     DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" SQLCLI "${@}"
 }
@@ -252,7 +211,8 @@ if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT
 
     DB_PASSWORD_CHANGED="1"
     if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
-        cat /tmp/GCLOUD_stderr.$$; return 1;
+        cat /tmp/GCLOUD_stderr.$$
+        return 1
     fi
 fi
 

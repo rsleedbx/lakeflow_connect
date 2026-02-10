@@ -45,9 +45,7 @@ SQLCLI_USER() {
 export -f SQLCLI_USER
 
 password_reset_db() {
-    if ! AZ postgres flexible-server update -y -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
-        cat /tmp/az_stderr.$$; return 1;
-    fi
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server update -y -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"
 }
 export -f password_reset_db
 
@@ -238,14 +236,16 @@ export DB_PASSWORD_CHANGED=""
 if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" TEST_DB_CONNECT; then
     if [[ -n "$DB_HOST_CREATED" ]]; then
         echo "can't connect to newly created host"
-        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
+        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+        return 1
     fi
 
     password_reset_db
 
     DB_PASSWORD_CHANGED="1"
     if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" TEST_DB_CONNECT; then
-        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1;
+        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+        return 1
     fi
 fi
 
@@ -308,4 +308,4 @@ fi
 echo -e "\nResource list"
 echo -e   "-------------\n"
 
-az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
+AZ resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table

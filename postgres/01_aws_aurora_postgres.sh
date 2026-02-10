@@ -105,13 +105,23 @@ echo -e "\nCreating permissive firewall rules if not exists"
 echo -e   "------------------------------------------------\n"
 
 firewall_rule() {
-    printf -v DB_FIREWALL_CIDRS_CSV "{CidrIp='%s'}," "${DB_FIREWALL_CIDRS[@]}"
-    DB_FIREWALL_CIDRS_CSV="${DB_FIREWALL_CIDRS_CSV%,}"  # remove trailing ,
+    # Default when unset (avoids "unbound variable" under set -u)
+    local _raw="${DB_FIREWALL_CIDRS:-0.0.0.0/0}"
+    # Normalize to one CIDR per array element (handles space-separated string or array)
+    local -a cidrs
+    if [[ "$_raw" == *" "* ]]; then
+        read -ra cidrs <<< "$_raw"
+    else
+        cidrs=( "$_raw" )
+    fi
+    # IpRanges must be list of dicts: [{CidrIp=...},{CidrIp=...}], not bare CIDR strings
+    printf -v DB_FIREWALL_CIDRS_CSV "{CidrIp=%s}," "${cidrs[@]}"
+    DB_FIREWALL_CIDRS_CSV="${DB_FIREWALL_CIDRS_CSV%,}"
 
     # https://docs.aws.amazon.com/cli/latest/reference/ec2/authorize-security-group-ingress.html
     DB_EXIT_ON_ERROR="PRINT_EXIT" AWS ec2 authorize-security-group-ingress \
         --group-name "$DB_SG_NAME" \
-        --ip-permissions "IpProtocol=tcp,IpRanges=[$DB_FIREWALL_CIDRS_CSV],FromPort=$DB_PORT,ToPort=$DB_PORT"     
+        --ip-permissions "IpProtocol=tcp,FromPort=$DB_PORT,ToPort=$DB_PORT,IpRanges=[$DB_FIREWALL_CIDRS_CSV]"
 }
 
 if ! AWS ec2 describe-security-groups \

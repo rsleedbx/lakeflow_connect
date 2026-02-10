@@ -9,6 +9,7 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
+export CLOUD_DB_TYPE=azure
 export AZ_DB_TYPE=sq
 export AZ_DB_SUFFIX=sq
 export CONNECTION_TYPE=SQLSERVER
@@ -28,82 +29,41 @@ AZ_INIT
 
 # #############################################################################
 # export functions
+# Note: SQLCLI wraps the database-specific CLI (SQLCMD for SQL Server)
 
+# Override SQLCLI to use SQLCMD for SQL Server
 SQLCLI() {
-    local DB_USERNAME=${DB_USERNAME:-${USER_USERNAME}}
-    local DB_PASSWORD=${DB_PASSWORD:-${USER_PASSWORD}}
-    local DB_HOST_FQDN=${DB_HOST_FQDN}
-    local DB_PORT=${DB_PORT:-${1433}}
-    local DB_CATALOG=${DB_CATALOG:-"master"}
-    local DB_LOGIN_TIMEOUT=${DB_LOGIN_TIMEOUT:-10}
-    local DB_URL=${DB_URL:-""}
-    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
-    # stdout and stderr file names
-    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
-    local DB_STDOUT=${DB_STDOUT:-"/tmp/sqlcmd_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-    local DB_STDERR=${DB_STDERR:-"/tmp/sqlcmd_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-
-    PWMASK="${*}"
-    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
-    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
-    PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
-    PWMASK="${PWMASK//$DBA_USERNAME/\$DBA_USERNAME}"
-    PWMASK="${PWMASK//$USER_USERNAME/\$USER_USERNAME}"
-    PWMASK="${PWMASK//$DB_CATALOG/\$DB_CATALOG}"
-
-    echo sqlcmd "${DB_USERNAME}:/${DB_CATALOG}" "${PWMASK}" 
-
-    if [[ -t 0 ]]; then
-        # stdin is attached
-        sqlcmd -d "$DB_CATALOG" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l "${DB_LOGIN_TIMEOUT}" "${@}"
-    else
-        # running in batch mode
-        sqlcmd -d "$DB_CATALOG" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l "${DB_LOGIN_TIMEOUT}" -h -1 "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
-    fi
-    RC=$?
-    if [[ "$RC" != "0" && "PRINT_RETURN" == "$DB_EXIT_ON_ERROR" ]]; then
-        cat "${DB_STDOUT}" "${DB_STDERR}"
-        return $RC
-    elif [[ "$RC" != "0" && "PRINT_EXIT" == "$DB_EXIT_ON_ERROR" ]]; then 
-        cat "${DB_STDOUT}" "${DB_STDERR}"
-        kill -INT $$
-    elif [[ "$RC" == "0" && "RETURN_1_STDOUT_EMPTY" == "$DB_EXIT_ON_ERROR" ]]; then 
-        if [[ ! -s "${DB_STDOUT}" ]]; then 
-            return 1
-        else
-            return 0
-        fi
-    else
-        return $RC
-    fi
+    SQLCMD "${@}"
 }
 export -f SQLCLI
 
+# Helper to run SQL as DBA user
 SQLCLI_DBA() {
     DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="" SQLCLI "${@}"
 }
 export -f SQLCLI_DBA
 
+# Helper to run SQL as regular user
 SQLCLI_USER() {
     DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" SQLCLI "${@}"
 }
 export -f SQLCLI_USER
 
-
 password_reset_db() {
-    if ! AZ sql server update -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
-        cat /tmp/az_stderr.$$; return 1;
-    fi
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql server update -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"
 }
 export -f password_reset_db
 
 start_db() {
     local skip_db_show="${1:-""}"
 
-    if [[ -z "$skip_db_show" ]] && ! AZ sql db show -n "$DB_CATALOG" -s "$DB_HOST" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
+    if [[ -z "$skip_db_show" ]]; then
+        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql db show -n "$DB_CATALOG" -s "$DB_HOST" -g "${RG_NAME}"
+    fi
     if [[ "Online" == "$(jq -r '.state' /tmp/az_stdout.$$)" ]]; then CONNECT_TIMEOUT=10; else CONNECT_TIMEOUT=120; fi
     if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG" "$CONNECT_TIMEOUT"; then
-        cat /tmp/az_stderr.$$; return 1;
+        cat /tmp/az_stderr.$$
+        return 1
     fi
 }
 export -f start_db
@@ -114,23 +74,17 @@ stop_db() {
 export -f stop_db
 
 delete_db() {
-    if ! AZ sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}"; then 
-        cat /tmp/az_stderr.$$; return 1;
-    fi
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}"
 }
 export -f delete_db
 
 delete_catalog() {
-    if ! AZ sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then 
-        cat /tmp/az_stderr.$$; return 1;
-    fi
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"
 }
 export -f delete_catalog
 
 show_firewall() {
-    if ! AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"; then 
-        cat /tmp/az_stderr.$$; return 1;
-    fi
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"
 }
 export -f show_firewall
 
@@ -145,9 +99,7 @@ for fw_rule in "${@}"; do
         host_max="$address"
     fi
     if ! AZ sql server firewall-rule show -n "${fw_rule_name}" -s "${DB_HOST}" -g "${RG_NAME}"; then
-        if ! AZ sql server firewall-rule create -n "${fw_rule_name}" -s "$DB_HOST" -g "${RG_NAME}" --start-ip-address ${host_min} --end-ip-address "${host_max}"; then
-            cat /tmp/az_stderr.$$; return 1;
-        fi
+        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql server firewall-rule create -n "${fw_rule_name}" -s "$DB_HOST" -g "${RG_NAME}" --start-ip-address ${host_min} --end-ip-address "${host_max}"
     fi
 done
 }
@@ -226,7 +178,8 @@ if ! AZ sql server show -n "${DB_HOST}" -g "${RG_NAME}"; then
     if ! AZ sql server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --admin-user "${DBA_USERNAME}" \
         --admin-password "${DBA_PASSWORD}"; then
-        cat /tmp/az_stderr.$$; return 1;
+        cat /tmp/az_stderr.$$
+        return 1
     fi
     DB_HOST_CREATED="1"
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
@@ -243,9 +196,7 @@ else
 fi
 
 read_fqdn_dba_if_host
-if ! AZ configure --defaults sql-server="${DB_HOST}"; then
-    cat /tmp/az_stderr.$$; return 1;
-fi
+DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure --defaults sql-server="${DB_HOST}"
 
 echo "AZ sql ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/servers/${DB_HOST}/overview"
 echo ""
@@ -273,7 +224,8 @@ if ! AZ sql db show -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
             --compute-model Serverless --backup-storage-redundancy Local \
             --zone-redundant false --exhaustion-behavior AutoPause --auto-pause-delay 15 \
              ; then
-            cat /tmp/az_stderr.$$; return 1;
+            cat /tmp/az_stderr.$$
+            return 1
         fi
     fi 
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
@@ -295,7 +247,7 @@ echo -e   "----------------------------------------------\n"
 
 # convert CIDR to range 
 
-if ! AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
+DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"
 if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
     firewall_rule_add "${DB_FIREWALL_CIDRS[@]}"
 fi
@@ -320,7 +272,8 @@ if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT
 
     DB_PASSWORD_CHANGED="1"
     if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
-        cat /tmp/az_stderr.$$; return 1;
+        cat /tmp/az_stderr.$$
+        return 1
     fi
 fi
 

@@ -27,13 +27,13 @@ fi
 # make sure to quote echo "$sql_dml_generator" otherwise the newline will be removed 
 if ! declare -p sql_dml_generator &> /dev/null; then
 echo "using default sql_dml_generator.  echo \"\$sql_dml_generator\" to view" 
-    sql_dml_generator="call $DB_SCHEMA.endless_dml_loop(1);"
+    sql_dml_generator="call $DB_SCHEMA.endless_dml_loop(NULL, NULL);"
 fi
 
 # #############################################################################
 
 # connect to master catalog
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="mysql" TEST_DB_CONNECT
+echo "select 1" | DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="mysql" SQLCLI_DBA
 
 # #############################################################################
 # create user login.  user by default = role + login
@@ -41,7 +41,7 @@ DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASS
 echo -e "Creating user"
 
 if [[ -z "$USER_USERNAME" || "$USER_USERNAME" == "$USER_BASENAME" ]]; then
-    DB_CATALOG="mysql" SQLCLI_DBA -e "SELECT user FROM mysql.user WHERE user not in ('azure_superuser','azure_superuser','mysql.infoschema','mysql.session','mysql.sys');" </dev/null
+    DB_CATALOG="mysql" SQLCLI_DBA -e "SELECT user FROM mysql.user WHERE user not in ('azure_superuser','azure_superuser','mysql.infoschema','mysql.session','mysql.sys','mariadb.infoschema','mariadb.session','mariadb.sys', 'rdsadmin');" </dev/null
     if grep -q -v -m 1 "^${DBA_USERNAME}$" /tmp/mysql_stdout.$$; then 
         USER_USERNAME=$(grep -v -m 1 "^${DBA_USERNAME}$" /tmp/mysql_stdout.$$)
         echo "Retrieving USER_USERNAME=$USER_USERNAME"
@@ -50,6 +50,8 @@ if [[ -z "$USER_USERNAME" || "$USER_USERNAME" == "$USER_BASENAME" ]]; then
         echo "Setting USER_USERNAME=$USER_BASENAME"
     fi
 fi
+
+echo "here"
 
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="mysql" SQLCLI_DBA <<EOF
 create user if not exists ${USER_USERNAME}@'%' IDENTIFIED BY '${USER_PASSWORD}';
@@ -64,7 +66,7 @@ FLUSH PRIVILEGES;
 EOF
 
 # connect to mysql as a user
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PASSWORD" DB_CATALOG="mysql" TEST_DB_CONNECT
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PASSWORD" DB_CATALOG="mysql" SQLCLI </dev/null
 
 # #############################################################################
 
@@ -85,10 +87,11 @@ export -f db_replication_cleanup
 
 echo -e "Creating schema\n"
 
-DB_CATALOG="$DB_CATALOG" SQLCLI -e "create schema if not exists ${DB_SCHEMA}" </dev/null
+DB_CATALOG="mysql" SQLCLI -e "create schema if not exists ${DB_SCHEMA}" </dev/null
 # /tmp/mysql_stdout.$$ will be 0 if schema was created.  drop the schema when done
+
 if [[ ! -s /tmp/mysql_stderr.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DB_STDOUT=~/nohup.out DB_STDERR=~/nohup.out DB_CATALOG="$DB_CATALOG" SQLCLI >>~/nohup.out 2>&1 << EOF &
+    nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DB_STDOUT=~/nohup.out DB_STDERR=~/nohup.out DB_CATALOG="mysql" SQLCLI >>~/nohup.out 2>&1 << EOF &
     drop table if exists ${DB_SCHEMA}.intpk; 
     drop table if exists ${DB_SCHEMA}.dtix; 
     drop schema if exists ${DB_SCHEMA};
@@ -101,14 +104,21 @@ fi
 
 echo -e "Creating DML store proc\n"
 
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="mysql" SQLCLI_DBA <<EOF
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_SCHEMA" SQLCLI_DBA -e 'DROP PROCEDURE IF EXISTS endless_dml_loop' </dev/null
+
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_SCHEMA" SQLCLI_DBA <<'EOF'
 DELIMITER $$
 
-CREATE PROCEDURE if not exists $DB_SCHEMA.endless_dml_loop(IN dml_interval_sec INT)
+CREATE PROCEDURE endless_dml_loop(
+    IN dml_interval_sec INT,
+    IN max_iterations INT
+)
 BEGIN
     DECLARE counter INT DEFAULT 0;
+    DECLARE sleep_interval INT DEFAULT COALESCE(dml_interval_sec, 60);
+    DECLARE stop_after INT DEFAULT COALESCE(max_iterations, 30);
     
-    WHILE counter >= 0 DO
+    WHILE counter < stop_after DO
         -- intpk
         INSERT INTO intpk (dt) VALUES (CURRENT_TIMESTAMP()), (CURRENT_TIMESTAMP()), (CURRENT_TIMESTAMP());
         COMMIT;
@@ -122,19 +132,18 @@ BEGIN
         -- dtix
         INSERT INTO dtix (pk,dt) VALUES (1,CURRENT_TIMESTAMP()), (2,CURRENT_TIMESTAMP()), (3,CURRENT_TIMESTAMP());
         COMMIT;
-        
-        -- wait (Replaced raise notice with SELECT for debugging and pg_sleep with SLEEP)
-        SELECT CONCAT('Counter ', counter) AS notice;
-        SET counter = counter + 1;
-        DO SLEEP(dml_interval_sec);
-    END WHILE;
-END$$
 
-DELIMITER ;
+        SELECT CONCAT('Counter ', counter, ' of ', stop_after, ' (sleeping ', sleep_interval, 's)') AS notice;
+        SET counter = counter + 1;
+        DO SLEEP(sleep_interval);
+    END WHILE;
+    
+    SELECT CONCAT('Completed ', counter, ' iterations') AS final_notice;
+END;
 EOF
 
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="mysql" SQLCLI_DBA <<EOF
-GRANT EXECUTE ON PROCEDURE ${DB_SCHEMA}.endless_dml_loop TO ${USER_USERNAME};
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_SCHEMA" SQLCLI_DBA <<EOF
+GRANT EXECUTE ON PROCEDURE endless_dml_loop TO ${USER_USERNAME};
 EOF
 
 # #############################################################################
@@ -164,11 +173,15 @@ EOF
 
 # .\+ = one or more so that nulls are not accepted
 if grep "^${DB_SCHEMA}.intpk,.\+$" /tmp/mysql_stdout.$$; then echo "table intpk ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$; return 1; fi
+else cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$
+    return 1
+fi
 
 # .\+ = one or more so that nulls are not accepted
 if grep "^${DB_SCHEMA}.dtix,.\+$" /tmp/mysql_stdout.$$ ; then echo "table dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$; return 1; fi
+else cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$
+    return 1
+fi
 fi
 
 # #############################################################################

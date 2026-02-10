@@ -87,22 +87,10 @@ echo -e "\nCreate Connection"
 echo -e    "----------------\n"
 
 # create connection and delete or update
-# the echo is to make the if statement work
+# specs are here ${STATE[conn_create_json]} ${STATE[conn_patch_json]}
+connection_spec_create
 
-STATE[conn_create_json]=$(yq -o json <<EOF
-name: $CONNECTION_NAME
-connection_type: $CONNECTION_TYPE
-comment: '{"catalog": "$DB_CATALOG", "schema": "$DB_SCHEMA", "secrets": {"scope": "$SECRETS_SCOPE", "key": "$DB_HOST"}}'
-options: 
-    host: $DB_HOST_FQDN
-    port: $DB_PORT
-    user: $USER_USERNAME
-    password: $USER_PASSWORD
-    $(if [[ "$CONNECTION_TYPE" == "SQLSERVER" ]]; then printf "trustServerCertificate: true"; fi)
-EOF
-)
-STATE[conn_patch_json]=$(echo "${STATE[conn_create_json]}" | jq 'del(.connection_type)')
-
+STATE[connection_created]=""
 if ! DBX connections get "$CONNECTION_NAME"; then
     DB_EXIT_ON_ERROR="PRINT_EXIT" DBX connections create --json "${STATE[conn_create_json]}"
     STATE[connection_created]=1
@@ -114,7 +102,6 @@ fi
 CONNECTION_ID=$(jq -r '.connection_id' /tmp/dbx_stdout.$$)
 STATE[CONNECTION_ID]="${CONNECTION_ID}"
 export CONNECTION_ID
-
 
 # #############################################################################
 
@@ -459,5 +446,5 @@ echo -e "Target schema : ${DATABRICKS_HOST_NAME}/explore/data/${TARGET_CATALOG}/
 echo -e "Connection    : ${DATABRICKS_HOST_NAME}/explore/connections/${CONNECTION_NAME}"
 echo -e "Job           : ${DATABRICKS_HOST_NAME}/jobs/$INGESTION_JOB_ID \n"   
 
-if ! DBX pipelines list-pipelines --filter "name like '${WHOAMI}_%'"; then cat /tmp/dbx_stderr.$$; return 1; fi
+DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines list-pipelines --filter "name like '${WHOAMI}_%'"
 jq --arg url "$DATABRICKS_HOST_NAME" -r 'sort_by(.name) | .[] | [ .name, .pipeline_id, .state, ($url + "/pipelines/" + .pipeline_id) ] | @tsv' /tmp/dbx_stdout.$$ 

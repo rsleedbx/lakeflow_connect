@@ -9,6 +9,7 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
+export CLOUD_DB_TYPE=azure-mysql
 export DB_TYPE=azure-mysql
 export DB_SUFFIX=azure-mysql
 export CONNECTION_TYPE=MYSQL
@@ -30,24 +31,22 @@ AZ_INIT
 # export functions
 
 SQLCLI() {
-    MYSQLCLI "${@}"
+    DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_SCHEMA}" MYSQLCLI "${@}"
 }
 export -f SQLCLI
 
 SQLCLI_DBA() {
-    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" MYSQLCLI "${@}"
+    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_SCHEMA}" MYSQLCLI "${@}"
 }
 export -f SQLCLI_DBA
 
 SQLCLI_USER() {
-    DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" MYSQLCLI "${@}"
+    DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_SCHEMA}" MYSQLCLI "${@}"
 }
 export -f SQLCLI_USER
 
 password_reset_db() {
-    if ! AZ mysql flexible-server update -y -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"; then
-        cat /tmp/az_stderr.$$; return 1;
-    fi
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ mysql flexible-server update -y -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"
 }
 export -f password_reset_db
 
@@ -73,32 +72,6 @@ for fw_rule in "${@}"; do
 done
 }
 
-# make sure to quote echo "$sql_dml_generator" otherwise the newline will be removed 
-export sql_dml_generator='
-set search_path='${DB_SCHEMA}';
-do $$
-declare 
-    counter integer := 0;
-begin
-    while counter >= 0 loop
-        -- intpk
-        insert into intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
-        commit;
-        delete from intpk where pk=(select min(pk) from intpk);
-        commit;
-        update intpk set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from intpk);
-        commit;
-        -- dtix
-        insert into dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
-        commit;
-        -- wait
-		raise notice '"'Counter %'"', counter;
-	    counter := counter + 1;
-        perform mysql_sleep(1);
-    end loop;
-end;
-$$;
-'
 
 # #############################################################################
 # set default host and catalog if not specified
@@ -217,14 +190,16 @@ export DB_PASSWORD_CHANGED=""
 if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="mysql" TEST_DB_CONNECT; then
     if [[ -n "$DB_HOST_CREATED" ]]; then
         echo "can't connect to newly created host"
-        cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$; return 1;
+        cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$
+        return 1
     fi
 
     password_reset_db
 
     DB_PASSWORD_CHANGED="1"
     if ! DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="mysql" TEST_DB_CONNECT; then
-        cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$; return 1;
+        cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$
+        return 1
     fi
 fi
 
@@ -276,14 +251,18 @@ fi
 # #############################################################################
 # save the credentials to secrets store for reuse
 
+echo -e "\nSave secrets" 
+echo -e   "------------\n"
+
 # check return code instead of echo values
 if should_save_secrets; then 
-    put_secrets                             # bash export format
-    put_secrets "${DB_HOST}_json" "json"    # json format for easier parsing
+    put_secrets                         # bash export format
+    put_secrets "${DB_HOST}" "json"     # json format for easier parsing
 fi
 
 # #############################################################################
 echo -e "\nResource list"
 echo -e   "-------------\n"
 
-az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
+AZ resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
+cat /tmp/az_stdout.$$

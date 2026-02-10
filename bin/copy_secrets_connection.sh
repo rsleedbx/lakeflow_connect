@@ -49,9 +49,13 @@ secrets_copy() {
 connection_name_from_json() {
     local DB_NAME CLOUD_PROVIDER DB_TYPE
     # Extract all three values in one jq call
-    read -r DB_NAME CLOUD_PROVIDER DB_TYPE <<< "$(jq -r '[.name, .cloud.provider, .db_type] | map(ascii_downcase) | @tsv')"
+    read -r DB_NAME CLOUD_PROVIDER DB_TYPE CLOUD_DB_TYPE <<< "$(jq -r '[.name, .cloud.provider, .db_type, (.cloud_db_type // "")] | map(ascii_downcase) | @tsv')"
     if [[ -z "$DB_TYPE" ]]; then DB_TYPE="SQLSERVER"; fi 
-    echo "$WHOAMI_USERNAME-$CLOUD_PROVIDER-$DB_TYPE"       
+    if [[ -z "$CLOUD_DB_TYPE" ]]; then 
+        echo "$WHOAMI_USERNAME-$CLOUD_PROVIDER-$DB_TYPE"   
+    else
+        echo "$WHOAMI_USERNAME-$CLOUD_DB_TYPE"   
+    fi    
 }
 
 copy_secrets_connection() {

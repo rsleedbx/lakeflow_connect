@@ -694,6 +694,7 @@ put_secrets() {
       secrets_key="${secrets_key}_json"
 key_value=$(yq -o json <<EOF   
 version: v2
+cloud_db_type: $CLOUD_DB_TYPE
 db_type: $DB_TYPE
 connection_type: $CONNECTION_TYPE
 catalog: $DB_CATALOG  

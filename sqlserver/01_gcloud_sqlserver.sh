@@ -9,6 +9,8 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
+GCLOUD_INIT
+
 export glcoud_database_version_ct=${glcoud_database_version:-SQLSERVER_2022_EXPRESS}
 export glcoud_database_version_both=${glcoud_database_version:-SQLSERVER_2022_ENTERPRISE}
 if [[ "${CDC_CT_MODE}" =~ ^(CT)$ ]]; then 
@@ -72,9 +74,9 @@ fi
 # get avail sql server if not specified
 if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]]; then
     if [[ "${CDC_CT_MODE}" =~ ^(CT)$ ]]; then 
-        GCLOUD sql instances list --filter "(databaseInstalledVersion ~ ^.*EXPRESS OR databaseInstalledVersion ~ ^.*WEB) AND name ~ ^${WHOAMI}-.*"
+        GCLOUD sql instances list --filter "(databaseVersion ~ EXPRESS OR databaseVersion ~ WEB) AND name ~ ^${WHOAMI}-.*"
     else
-        GCLOUD sql instances list --filter "(databaseInstalledVersion ~ ^.*ENTERPRISE OR databaseInstalledVersion ~ ^.*STANDARD) AND name ~ ^${WHOAMI}-.*"
+        GCLOUD sql instances list --filter "(databaseVersion ~ ENTERPRISE OR databaseVersion ~ STANDARD) AND name ~ ^${WHOAMI}-.*"
     fi
     read -rd "\n" x1 x2 <<< "$(jq -r 'first( .[]) | .name, (.ipAddresses.[] | select(.type=="PRIMARY") | .ipAddress)' /tmp/gcloud_stdout.$$)"
     if [[ -n $x1 && -n $x2 ]]; then DB_HOST="$x1"; DB_HOST_FQDN="$x2"; fi
@@ -115,7 +117,7 @@ export DB_HOST_CREATED=""
 if ! GCLOUD sql instances describe ${DB_HOST}; then
 
     if [[ "${CDC_CT_MODE}" =~ ^(CT)$  ]]; then 
-        GCLOUD sql instances create ${DB_HOST} \
+        DB_EXIT_ON_ERROR="PRINT_EXIT" GCLOUD sql instances create ${DB_HOST} \
         --tags "owner=${DBX_USERNAME}","${REMOVE_AFTER:+removeafter=${REMOVE_AFTER}}" \
         ${CLOUD_LOCATION:+"--zone=$CLOUD_LOCATION"} \
         --edition=enterprise \
@@ -128,7 +130,7 @@ if ! GCLOUD sql instances describe ${DB_HOST}; then
         --no-deletion-protection
     else
         if [[ ${glcoud_database_version_both} == "*STANDARD" ]]; then
-            GCLOUD sql instances create ${DB_HOST} \
+            DB_EXIT_ON_ERROR="PRINT_EXIT" GCLOUD sql instances create ${DB_HOST} \
             --tags "owner=${DBX_USERNAME}","${REMOVE_AFTER:+removeafter=${REMOVE_AFTER}}" \
             ${CLOUD_LOCATION:+"--zone=$CLOUD_LOCATION"} \
             --edition=enterprise \
@@ -140,7 +142,7 @@ if ! GCLOUD sql instances describe ${DB_HOST}; then
             --no-backup \
             --no-deletion-protection
         else
-            GCLOUD sql instances create ${DB_HOST} \
+            DB_EXIT_ON_ERROR="PRINT_EXIT" GCLOUD sql instances create ${DB_HOST} \
             ${CLOUD_LOCATION:+"--zone=$CLOUD_LOCATION"} \
             --tags "owner=${DBX_USERNAME}","${REMOVE_AFTER:+removeafter=${REMOVE_AFTER}}" \
             --edition=enterprise \
@@ -151,10 +153,6 @@ if ! GCLOUD sql instances describe ${DB_HOST}; then
             --root-password "${DBA_PASSWORD}" \
             --no-backup \
             --no-deletion-protection
-        fi
-        if [[ -b "$(cat /tmp/gcloud_stderr.$$ | grep ERROR)" ]]; then
-                cat /tmp/gcloud_stderr.$$
-                return 1
         fi
     fi
     DB_HOST_CREATED="1"
@@ -181,12 +179,7 @@ echo -e "Creating permissive firewall rules if not exists\n"
 # convert CIDR to range 
 
 firewall_set() {
-    printf -v DB_FIREWALL_CIDRS_CSV '%s,' "${DB_FIREWALL_CIDRS[@]}"
-    DB_FIREWALL_CIDRS_CSV="${DB_FIREWALL_CIDRS_CSV%,}"  # remove trailing ,
-    if ! GCLOUD sql instances patch "${DB_HOST}" --authorized-networks="${DB_FIREWALL_CIDRS_CSV}"; then
-        cat /tmp/gcloud_stderr.$$
-        return 1
-    fi
+    mistfw add --cidrs "$DB_FIREWALL_CIDRS" --cloud gcp --instance "$DB_HOST" --project "$GCLOUD_PROJECT" --db-type sqlserver --region "$CLOUD_LOCATION" --myip
 }
 
 if (( "$(jq '.settings.ipConfiguration.authorizedNetworks | length' /tmp/gcloud_stdout.$$)" == 0 )); then 

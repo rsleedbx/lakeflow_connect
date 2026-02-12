@@ -6,3 +6,5 @@ sqlalchemy
 jinja2
 pandas
 netaddr
+# mistfw: manage cloud DB firewall rules (GCP, AWS, Azure). From PyPI or GitHub:
+git+https://github.com/rsleedbx/mistfw.git

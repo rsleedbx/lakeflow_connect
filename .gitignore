@@ -3,6 +3,11 @@ nohup.out
 terraform.tfstate*
 .terraform.*
 .terraform/
+deploy/tf/terraform.tfvars
+deploy/tf/tfplan
+deploy/tf/.provider-cache/
+deploy/tf/.provider-build/
+deploy/tf/*.bak
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

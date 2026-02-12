@@ -52,6 +52,12 @@ Open a terminal on Mac OSX and install the following tools.
     brew install --cask google-cloud-sdk
     gcloud auth login                       # used by glcoud commands
     gcloud auth application-default login   # used by apps such as terraform
+    # list current project
+    gcloud config get-value project
+    # change project if required
+    gcloud config set project NEW_PROJECT_NAME
+    gcloud auth application-default set-quota-project NEW_PROJECT_NAME
+    # check permission
     gcloud sql instances list
     ```
 

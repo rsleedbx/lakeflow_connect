@@ -88,7 +88,7 @@ echo -e    "----------------\n"
 
 # create connection and delete or update
 # specs are here ${STATE[conn_create_json]} ${STATE[conn_patch_json]}
-connection_spec_create
+connection_spec_from_env STATE
 
 STATE[connection_created]=""
 if ! DBX connections get "$CONNECTION_NAME"; then
@@ -99,6 +99,7 @@ else
     DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/connections/"$CONNECTION_NAME" --json "${STATE[conn_patch_json]}"
 fi
 
+# sometime in 2026, connection_name is used and not connection_id
 CONNECTION_ID=$(jq -r '.connection_id' /tmp/dbx_stdout.$$)
 STATE[CONNECTION_ID]="${CONNECTION_ID}"
 export CONNECTION_ID
@@ -135,7 +136,7 @@ gw_spec="$(echo '{
 "continuous": "'"$GATEWAY_PIPELINE_CONTINUOUS"'",
 "development": '"$PIPELINE_DEV_MODE"',
 "gateway_definition": {
-  "connection_id": "'"$CONNECTION_ID"'",
+  "connection_name": "'"$CONNECTION_NAME"'",
   "gateway_storage_catalog": "'"$STAGING_CATALOG"'",
   "gateway_storage_schema": "'"$STAGING_SCHEMA"'",
   "gateway_storage_name": "'"$GATEWAY_PIPELINE_NAME"'" 

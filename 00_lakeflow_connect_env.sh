@@ -364,22 +364,19 @@ SQLCMD() {
     local DB_STDOUT=${DB_STDOUT:-"/tmp/sqlcmd_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
     local DB_STDERR=${DB_STDERR:-"/tmp/sqlcmd_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
 
-    PWMASK="${*}"
+    PWMASK="sqlcmd -d '$DB_CATALOG' -S '${DB_HOST_FQDN},${DB_PORT}' -U '${DB_USERNAME}' -P '${DB_PASSWORD}' -C -l '${DB_LOGIN_TIMEOUT}' -h -1 ${*}"
     PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
     PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
     PWMASK="${PWMASK//$DBX_USERNAME/\$DBX_USERNAME}"
-    PWMASK="${PWMASK//$DBA_USERNAME/\$DBA_USERNAME}"
-    PWMASK="${PWMASK//$USER_USERNAME/\$USER_USERNAME}"
-    PWMASK="${PWMASK//$DB_CATALOG/\$DB_CATALOG}"
 
-    echo "sqlcmd -d '$DB_CATALOG' -S ${DB_HOST_FQDN},${DB_PORT} -U '${DBA_USERNAME}' -P \${DBA_PASSWORD} -C -l ${DB_LOGIN_TIMEOUT}"
+    echo "${PWMASK}"
 
     if [[ -t 0 ]]; then
         # stdin is attached
-        sqlcmd -d "$DB_CATALOG" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l "${DB_LOGIN_TIMEOUT}" "${@}"
+        sqlcmd -d "$DB_CATALOG" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DB_USERNAME}" -P "${DB_PASSWORD}" -C -l "${DB_LOGIN_TIMEOUT}" "${@}"
     else
         # running in batch mode
-        sqlcmd -d "$DB_CATALOG" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" -C -l "${DB_LOGIN_TIMEOUT}" -h -1 "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
+        sqlcmd -d "$DB_CATALOG" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DB_USERNAME}" -P "${DB_PASSWORD}" -C -l "${DB_LOGIN_TIMEOUT}" -h -1 "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
     fi
 
     RC=$?
@@ -777,7 +774,7 @@ export -f connection_spec_from_json
 connection_spec_from_env() {
     local -n OUTPUT="${1}"
 
-    OUTPUT[conn_create_json]=$(echo "${OUTPUT[secret_value_env]}" | yq -o json <<EOF
+    OUTPUT[conn_create_json]=$(yq -o json <<EOF
 name: $CONNECTION_NAME
 connection_type: $CONNECTION_TYPE
 comment: '{"secrets": {"scope": "$SECRETS_SCOPE", "key": "$DB_HOST"}}'

@@ -248,43 +248,51 @@ set_repl_on_catalog
 
 echo "enabling schema evolution"
 
-ddl_script_url="https://docs.databricks.com/aws/en/assets/files/ddl_support_objects-06ebad393ea6bc7d853d5504dc6542de.sql"
-
 set_sch_evo() {
-case "${CDC_CT_MODE}" in 
-"BOTH"|"CDC") 
-    if [[ -f ./ddl_support_objects.sql ]]; then
-    echo "using ./ddl_support_objects.sql"
-    cat ./ddl_support_objects.sql | \
-    sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
-    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+
+    ddl_script_url="https://docs.databricks.com/aws/en/assets/files/ddl_support_objects-06ebad393ea6bc7d853d5504dc6542de.sql"
+
+
+    case "${CDC_CT_MODE}" in
+    "BOTH"|"CDC")
+        ddl_script=./ddl_support_objects.sql
+        ;;
+    "CT")
+        ddl_script=./ddl_support_objects_ct_only.sql
+        ;;
+    *)
+        echo "CDC_CT_MODE=${CDC_CT_MODE} must be BOTH or CT"
+        return 1
+        ;;
+    esac
+
+    if [[ -f "$ddl_script" ]]; then
+        echo "using $ddl_script with $CDC_CT_MODE"
+        cat "$ddl_script" | \
+        sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
+        DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
     else
-    echo "downloading ./ddl_support_objects.sql"
-    wget -qO- $ddl_script_url | \
-    sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
-    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+        echo "downloading $ddl_script"
+        wget -qO- $ddl_script_url | \
+        sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
+        DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
     fi
-    ;;
-"CT") 
-    if [[ -f ./ddl_support_objects_ct_only.sql ]]; then
-    echo "using ./ddl_support_objects_ct_only.sql"
-    cat ./ddl_support_objects_ct_only.sql | \
-    sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
-    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
-    else
-    echo "downloading ./ddl_support_objects.sql"
-    wget -qO- $ddl_script_url | \
-    sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
-    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
-    fi
-    ;;
-*)
-    echo "CDC_CT_MODE=${CDC_CT_MODE} must be BOTH or CT"
-    return 1
-    ;;
-esac
 }
+export -f set_sch_evo
 set_sch_evo
+
+utility_script_url="https://docs.databricks.com/aws/en/assets/files/utility_script-a4544ba646de3f6f3fd03eb3dcba563e.sql"
+utility_script_path="$(dirname "${BASH_SOURCE[0]:-.}")/utility_script.sql"
+run_utility_script() {
+    if [[ -f "$utility_script_path" ]]; then
+        echo "using $utility_script_path"
+        cat "$utility_script_path" | DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+    else
+        echo "downloading utility script"
+        wget -qO- "$utility_script_url" | DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+    fi
+}
+export -f run_utility_script
 
 # #############################################################################
 

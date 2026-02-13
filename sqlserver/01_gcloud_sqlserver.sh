@@ -11,6 +11,8 @@ fi
 
 GCLOUD_INIT
 
+export CLOUD_LOCATION="us-central1-a"
+
 export glcoud_database_version_ct=${glcoud_database_version:-SQLSERVER_2022_EXPRESS}
 export glcoud_database_version_both=${glcoud_database_version:-SQLSERVER_2022_ENTERPRISE}
 if [[ "${CDC_CT_MODE}" =~ ^(CT)$ ]]; then 
@@ -124,7 +126,6 @@ if ! GCLOUD sql instances describe ${DB_HOST}; then
         --database-version=${glcoud_database_version_ct} \
         --cpu=1 \
         --memory=4GB \
-        --zone=us-central1-a \
         --root-password "${DBA_PASSWORD}" \
         --no-backup \
         --no-deletion-protection
@@ -137,7 +138,6 @@ if ! GCLOUD sql instances describe ${DB_HOST}; then
             --database-version=${glcoud_database_version_both} \
             --cpu=1 \
             --memory=4GB \
-            --zone=us-central1-a \
             --root-password "${DBA_PASSWORD}" \
             --no-backup \
             --no-deletion-protection
@@ -149,7 +149,6 @@ if ! GCLOUD sql instances describe ${DB_HOST}; then
             --database-version=${glcoud_database_version_both} \
             --cpu=2 \
             --memory=8GB \
-            --zone=us-central1-a \
             --root-password "${DBA_PASSWORD}" \
             --no-backup \
             --no-deletion-protection
@@ -214,11 +213,9 @@ fi
 
 echo -e "\nCreate catalog if not exists\n" 
 
-SQLCMD -d "master" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" \
-    -C -l 10 -h -1 -l 60 -Q "set nocount on; SELECT name FROM master.sys.databases WHERE name = N'${DB_CATALOG}';"
+SQLCLI_DBA -Q "set nocount on; SELECT name FROM master.sys.databases WHERE name = N'${DB_CATALOG}';" </dev/null
 if [[ ! -s /tmp/sqlcmd_stdout.$$ && ! -s /tmp/sqlcmd_stderr.$$ ]]; then
-    SQLCMD -d "master" -S "${DB_HOST_FQDN},${DB_PORT}" -U "${DBA_USERNAME}" -P "${DBA_PASSWORD}" \
-        -C -l 10 -h -1 -Q "create database [${DB_CATALOG}];"
+    SQLCLI_DBA -Q "create database [${DB_CATALOG}];" </dev/null
     if [[ -s /tmp/sqlcmd_stdout.$$ || -s /tmp/sqlcmd_stderr.$$ ]]; then
         cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
         return 1

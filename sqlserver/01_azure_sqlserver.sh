@@ -39,7 +39,7 @@ export -f SQLCLI
 
 # Helper to run SQL as DBA user
 SQLCLI_DBA() {
-    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="" SQLCLI "${@}"
+    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" SQLCLI "${@}"
 }
 export -f SQLCLI_DBA
 

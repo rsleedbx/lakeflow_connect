@@ -103,7 +103,9 @@ DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PA
 DB_CATALOG="postgres" SQLCLI_DBA -c "SHOW wal_level" </dev/null
 
 if [[ "logical" == $(cat /tmp/psql_stdout.$$) ]]; then echo "logical replica enable ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
+else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+    return 1
+fi
 
 # remove left over slot names
 db_replication_cleanup() {
@@ -159,11 +161,15 @@ EOF
 
 # .\+ = one or more so that nulls are not accepted
 if grep "^${DB_SCHEMA}.intpk,.\+$" /tmp/psql_stdout.$$; then echo "table intpk ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
+else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+    return 1
+fi
 
 # .\+ = one or more so that nulls are not accepted
 if grep "^${DB_SCHEMA}.dtix,.\+$" /tmp/psql_stdout.$$ ; then echo "table dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
+else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+    return 1
+fi
 fi
 
 # #############################################################################

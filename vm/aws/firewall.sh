@@ -53,7 +53,7 @@ AWS network-firewall create-firewall-policy \
 read -rd "\n" FW_POLICY_ARN <<< "$(jq -r '.FirewallPolicyResponse.FirewallPolicyArn' /tmp/aws_stdout.$$)"
 export FW_POLICY_ARN
 
-aws network-firewall create-firewall \
+AWS network-firewall create-firewall \
 --firewall-name allow-sqlserver-firewall \
 --firewall-policy-arn "'$FW_POLICY_ARN'" \
 --vpc-id "$DB_VPC_ID" \
@@ -70,25 +70,25 @@ aws network-firewall create-firewall \
 --no-paginate
 
 
-aws network-firewall describe-firewall --firewall-name allow-sqlserver-firewall \
+AWS network-firewall describe-firewall --firewall-name allow-sqlserver-firewall \
 --profile databricks-power-user-997819012307 \
 --region us-west-2 \
 --no-paginate --no-cli-pager
 
 
-aws network-firewall delete-firewall \
+AWS network-firewall delete-firewall \
 --firewall-name allow-sqlserver-firewall \
 --profile databricks-power-user-997819012307 \
 --region us-west-2 \
 --no-paginate --no-cli-pager
 
-aws network-firewall delete-firewall-policy \
+AWS network-firewall delete-firewall-policy \
 --firewall-policy-name allow-sqlserver-policy \
 --profile databricks-power-user-997819012307 \
 --region us-west-2 \
 --no-paginate --no-cli-pager
 
-aws network-firewall delete-rule-group \
+AWS network-firewall delete-rule-group \
 --rule-group-name allow-sqlserver-rule-group-0-0-0-0-0 \
 --type STATELESS \
 --profile databricks-power-user-997819012307 \

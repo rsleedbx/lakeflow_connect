@@ -5,3 +5,4 @@ pymssql
 sqlalchemy
 jinja2
 pandas
+netaddr

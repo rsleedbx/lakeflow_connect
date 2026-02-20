@@ -63,7 +63,7 @@ if ! AWS rds describe-db-instances \
     # db.m5.large
     # db.t3.large not supported
     DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds create-db-instance \
-        --tags "Key=Owner,Value=${DBX_USERNAME}" "${REMOVE_AFTER:+Key=RemoveAfter,Value=${REMOVE_AFTER}}" "Key=AllowDowntime,Value=off" "Key=KeepAlive,Value=True"\
+        --tags "Key=Owner,Value=${DBX_USERNAME}" "${REMOVE_AFTER:+Key=RemoveAfter,Value=${REMOVE_AFTER}}" \
         --db-instance-identifier "$DB_HOST" \
         --db-name "$DB_CATALOG" \
         --db-instance-class db.m5.large \
@@ -105,18 +105,23 @@ echo -e "\nCreating permissive firewall rules if not exists"
 echo -e   "------------------------------------------------\n"
 
 firewall_rule() {
-
-    if [[ ${DB_FIREWALL_CIDRS} != '0.0.0.0/0' ]]; then
-        printf -v DB_FIREWALL_CIDRS_CSV "{CidrIp='%s'}," "${DB_FIREWALL_CIDRS[@]}"
+    # Default when unset (avoids "unbound variable" under set -u)
+    local _raw="${DB_FIREWALL_CIDRS:-0.0.0.0/0}"
+    # Normalize to one CIDR per array element (handles space-separated string or array)
+    local -a cidrs
+    if [[ "$_raw" == *" "* ]]; then
+        read -ra cidrs <<< "$_raw"
     else
-        printf -v DB_FIREWALL_CIDRS_CSV "{CidrIp='%s'}," $(curl https://raw.githubusercontent.com/databricks-it/ip-whitelist/refs/heads/main/vpn-whitelist.json?token=GHSAT0AAAAAADOIHC7KHVM4JYC4VQ6EGKX62IKFUTQ | jq -r '[.prisma | .[] | .ip_ranges | .[]] | sort | unique | .[]' | bin/optimize_cidrs.py)
+        cidrs=( "$_raw" )
     fi
-    DB_FIREWALL_CIDRS_CSV="${DB_FIREWALL_CIDRS_CSV%,}"  # remove trailing ,
+    # IpRanges must be list of dicts: [{CidrIp=...},{CidrIp=...}], not bare CIDR strings
+    printf -v DB_FIREWALL_CIDRS_CSV "{CidrIp=%s}," "${cidrs[@]}"
+    DB_FIREWALL_CIDRS_CSV="${DB_FIREWALL_CIDRS_CSV%,}"
 
     # https://docs.aws.amazon.com/cli/latest/reference/ec2/authorize-security-group-ingress.html
     DB_EXIT_ON_ERROR="PRINT_EXIT" AWS ec2 authorize-security-group-ingress \
         --group-name "$DB_SG_NAME" \
-        --ip-permissions "IpProtocol=tcp,IpRanges=[$DB_FIREWALL_CIDRS_CSV],FromPort=$DB_PORT,ToPort=$DB_PORT"     
+        --ip-permissions "IpProtocol=tcp,FromPort=$DB_PORT,ToPort=$DB_PORT,IpRanges=[$DB_FIREWALL_CIDRS_CSV]"
 }
 
 if ! AWS ec2 describe-security-groups \
@@ -180,30 +185,32 @@ if ! AWS rds describe-db-parameter-groups \
 
 fi
 
-aws_rds_build_db_param_group() {
-    local name=$1
-    local value=$2
-    local method=${3:-"pending-reboot"}
-    if [[ "$value" != "$(jq --arg name "$name" -r '.Parameters.[] | select(.ParameterName == $name) | .ParameterValue | ascii_downcase' /tmp/aws_parm_list.$$)" ]]; then
-        DB_PARAMS_CHANGED="${DB_PARAMS_CHANGED:+${DB_PARAMS_CHANGED},}{\"ParameterName\":\"$name\", \"ParameterValue\":\"$value\", \"ApplyMethod\": \"$method\"}"
-    fi
-}
-
 DB_PARAMS_CHANGED=""
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_STDOUT=/tmp/aws_parm_list.$$ AWS rds describe-db-parameters --db-parameter-group-name "$DB_PARM_GRP_NAME" 
+ DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds describe-db-parameters \
+    --db-parameter-group-name "$DB_PARM_GRP_NAME" \
+    --query "Parameters[?ParameterName=='rds.logical_replication' || ParameterName=='rds.force_ssl']"
 
-aws_rds_build_db_param_group "max_replication_slots" "10" 
-aws_rds_build_db_param_group "max_wal_senders" "15"
-aws_rds_build_db_param_group "max_worker_processes" "10"
-aws_rds_build_db_param_group "max_slot_wal_keep_size" "10240"
-aws_rds_build_db_param_group "rds.force_ssl" "0"
-aws_rds_build_db_param_group "rds.logical_replication" "1"
-
-if [[ -n ${DB_PARAMS_CHANGED} ]]; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds modify-db-parameter-group --db-parameter-group-name "$DB_PARM_GRP_NAME" --parameters "[$DB_PARAMS_CHANGED]"
+if [[ "1" != "$(jq -r '.[] | select(.ParameterName=="rds.logical_replication") | .ParameterValue' /tmp/aws_stdout.$$)" ]]; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds modify-db-parameter-group \
+    --db-parameter-group-name "$DB_PARM_GRP_NAME" \
+    --parameters '[
+    {"ParameterName":"max_replication_slots",   "ParameterValue":"10",  "ApplyMethod": "pending-reboot"},
+    {"ParameterName":"max_wal_senders",         "ParameterValue":"15",  "ApplyMethod": "pending-reboot"}, 
+    {"ParameterName":"max_worker_processes",    "ParameterValue":"10",  "ApplyMethod": "pending-reboot"}, 
+    {"ParameterName":"rds.logical_replication", "ParameterValue":"1",   "ApplyMethod": "pending-reboot"}
+]'
+    (( DB_PARAMS_CHANGED += 1 ))
 fi
 
-# is this required? DBParameterGroupName is what is currently setup but nothing has changed 
+if [[ "0" != "$(jq -r '.[] | select(.ParameterName=="rds.force_ssl") | .ParameterValue' /tmp/aws_stdout.$$)" ]]; then
+DB_EXIT_ON_ERROR="PRINT_EXIT" AWS rds modify-db-parameter-group \
+    --db-parameter-group-name "$DB_PARM_GRP_NAME" \
+    --parameters '[
+    {"ParameterName":"rds.force_ssl",           "ParameterValue":"off", "ApplyMethod": "pending-reboot"}
+]'
+    (( DB_PARAMS_CHANGED += 1 ))
+fi
+
 if [[ "$DBParameterGroupName" != "$DB_PARM_GRP_NAME" ]]; then
     (( DB_PARAMS_CHANGED += 1 ))
 fi

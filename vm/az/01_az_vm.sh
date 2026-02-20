@@ -24,50 +24,25 @@ export route="${WHOAMI}-route"          #-$randomIdentifier"
 echo -e "\nCreating network if not exists \n"
 
 if ! AZ network vnet subnet show --name $subnet --vnet-name $vNet; then
-    if ! AZ network vnet create --name $vNet -g "${RG_NAME}" --location "$CLOUD_LOCATION" --address-prefixes 10.0.0.0/16; then 
-        cat /tmp/az_stderr.$$; return 1 
-    fi
-
-    if ! AZ network vnet subnet create --name $subnet -g "${RG_NAME}" --vnet-name $vNet --address-prefixes 10.0.0.0/24 --delegations Microsoft.Sql/managedInstances; then 
-        cat /tmp/az_stderr.$$; return 1 
-    fi
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network vnet create --name $vNet -g "${RG_NAME}" --location "$CLOUD_LOCATION" --address-prefixes 10.0.0.0/16
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network vnet subnet create --name $subnet -g "${RG_NAME}" --vnet-name $vNet --address-prefixes 10.0.0.0/24 --delegations Microsoft.Sql/managedInstances
 fi
 
-AZ network nsg rule list --nsg-name $nsg  
-if [[ $? != 0 ]]; then
-    AZ network nsg create --name $nsg -g "${RG_NAME}" --location "$CLOUD_LOCATION"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network nsg rule create --name "allow_management_inbound" --nsg-name $nsg --priority 100 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges 9000 9003 1438 1440 1452 --direction Inbound --protocol Tcp --source-address-prefixes "*" --source-port-ranges "*"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network nsg rule create --name "allow_misubnet_inbound" --nsg-name $nsg --priority 200 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Inbound --protocol "*" --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network nsg rule create --name "allow_health_probe_inbound" --nsg-name $nsg --priority 300 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Inbound --protocol "*" --source-address-prefixes AzureLoadBalancer --source-port-ranges "*"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network nsg rule create --name "allow_management_outbound" --nsg-name $nsg --priority 1100 -g "${RG_NAME}" --access Allow --destination-address-prefixes AzureCloud --destination-port-ranges 443 12000 --direction Outbound --protocol Tcp --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network nsg rule create --name "allow_misubnet_outbound" --nsg-name $nsg --priority 200 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Outbound --protocol "*" --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
+if ! AZ network nsg rule list --nsg-name $nsg; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg create --name $nsg -g "${RG_NAME}" --location "$CLOUD_LOCATION"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg rule create --name "allow_management_inbound" --nsg-name $nsg --priority 100 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges 9000 9003 1438 1440 1452 --direction Inbound --protocol Tcp --source-address-prefixes "*" --source-port-ranges "*"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg rule create --name "allow_misubnet_inbound" --nsg-name $nsg --priority 200 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Inbound --protocol "*" --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg rule create --name "allow_health_probe_inbound" --nsg-name $nsg --priority 300 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Inbound --protocol "*" --source-address-prefixes AzureLoadBalancer --source-port-ranges "*"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg rule create --name "allow_management_outbound" --nsg-name $nsg --priority 1100 -g "${RG_NAME}" --access Allow --destination-address-prefixes AzureCloud --destination-port-ranges 443 12000 --direction Outbound --protocol Tcp --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg rule create --name "allow_misubnet_outbound" --nsg-name $nsg --priority 200 -g "${RG_NAME}" --access Allow --destination-address-prefixes 10.0.0.0/24 --destination-port-ranges "*" --direction Outbound --protocol "*" --source-address-prefixes 10.0.0.0/24 --source-port-ranges "*"
 fi
 
 
-AZ network route-table route list --route-table-name $route 
-if [[ $? != 0 ]]; then
-    AZ network route-table create --name $route -g "${RG_NAME}" --location "$CLOUD_LOCATION"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network route-table route create --address-prefix 0.0.0.0/0 --name "primaryToMIManagementService" --next-hop-type Internet -g "${RG_NAME}" --route-table-name $route  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network route-table route create --address-prefix 10.0.0.0/24 --name "ToLocalClusterNode" --next-hop-type VnetLocal -g "${RG_NAME}" --route-table-name $route  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
-
-    AZ network vnet subnet update --name $subnet --network-security-group $nsg --route-table $route --vnet-name $vNet -g "${RG_NAME}"  
-    if [[ $? != 0 ]]; then cat /tmp/az_stderr.$$; return 1; fi
+if ! AZ network route-table route list --route-table-name $route; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network route-table create --name $route -g "${RG_NAME}" --location "$CLOUD_LOCATION"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network route-table route create --address-prefix 0.0.0.0/0 --name "primaryToMIManagementService" --next-hop-type Internet -g "${RG_NAME}" --route-table-name $route
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network route-table route create --address-prefix 10.0.0.0/24 --name "ToLocalClusterNode" --next-hop-type VnetLocal -g "${RG_NAME}" --route-table-name $route
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network vnet subnet update --name $subnet --network-security-group $nsg --route-table $route --vnet-name $vNet -g "${RG_NAME}"
 fi
 
 # #############################################################################
@@ -76,7 +51,7 @@ fi
 
 echo -e "Creating permissive firewall rules if not exists \n"
 
-if ! AZ network nsg rule list --nsg-name "$nsg" -g "${RG_NAME}"; then cat /tmp/az_stderr.$$; return 1; fi
+DB_EXIT_ON_ERROR="PRINT_EXIT" AZ network nsg rule list --nsg-name "$nsg" -g "${RG_NAME}"
 if [[ "0" == "$(jq 'map_values(select(.priority==150)) | length' /tmp/az_stdout.$$)" ]]; then
     if ! AZ network nsg rule show --name "0_0_0_0_0" --nsg-name "$nsg" -g "${RG_NAME}"; then
         if ! AZ network nsg rule create --name "0_0_0_0_0" --nsg-name "$nsg" -g "${RG_NAME}"\
@@ -91,7 +66,7 @@ fi
 
 # #############################################################################
 
-az vm create \
+AZ vm create \
     --name "$DB_HOST" \
     --resource-group "${RG_NAME}" \
     --location "$CLOUD_LOCATION" \
@@ -108,4 +83,4 @@ return 0
 echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
 echo "Resource list"
 
-az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
+AZ resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # error out when undeclared variable is used
-set -u 
+set -u
 
 # must be sourced for exports to continue to the next script
 if [ "$0" == "$BASH_SOURCE" ]; then
@@ -25,6 +25,14 @@ if (( ${BASH_VERSINFO[0]} < 4 )); then
     kill -INT $$
 fi
 
+# config 
+declare -A CONFIG 
+export CONFIG
+
+# state
+declare -A STATE 
+export STATE
+
 # set tags that will resources remove using cloud scheduler
 if ! declare -p REMOVE_AFTER &> /dev/null; then
     if ! REMOVE_AFTER=$(date --date='+0 day' +%Y-%m-%d 2>/dev/null); then   # blank is do not delete
@@ -36,20 +44,32 @@ if ! declare -p REMOVE_AFTER &> /dev/null; then
     export REMOVE_AFTER
 fi
 
+if ! declare -p PUBLISH_EVENT_LOG &> /dev/null; then
+export PUBLISH_EVENT_LOG=${PUBLISH_EVENT_LOG:-""}            # don't publish (not supported yet ) 
+fi
+
 if ! declare -p GATEWAY_DRIVER_NODE &> /dev/null; then
-export GATEWAY_DRIVER_NODE=${GATEWAY_DRIVER_NODE:-""}       # r5.xlarge (4 cores), r5.2xlarge (8cores)
+export GATEWAY_DRIVER_NODE=${GATEWAY_DRIVER_NODE:-""}       # m5.xlarge (4 cores), m5.2xlarge (8cores), m-fleet.large, m-fleet.xlarge, m-fleet.2xlarge 
 fi
 
 if ! declare -p GATEWAY_WORKER_NODE &> /dev/null; then
-export GATEWAY_WORKER_NODE=${GATEWAY_WORKER_NODE:-""}       # r5.xlarge (4 cores), r5.2xlarge (8cores)
+export GATEWAY_WORKER_NODE=${GATEWAY_WORKER_NODE:-""}       # m5.xlarge (4 cores), m5.2xlarge (8cores)
 fi
 
 if ! declare -p GATEWAY_MIN_WORKERS &> /dev/null; then
-export GATEWAY_MIN_WORKERS=${GATEWAY_MIN_WORKERS:-0}       # 1 = default 
+export GATEWAY_MIN_WORKERS=${GATEWAY_MIN_WORKERS:-""}       # 1 = default 
 fi
 
-if ! declare -p GATEWAY_MAX_WORKERS &> /dev/null; then
-export GATEWAY_MAX_WORKERS=${GATEWAY_MAX_WORKERS:-0}       # 5 = default
+if ! declare -p GATEWAY_DRIVER_POOL &> /dev/null; then
+export GATEWAY_MAX_WORKERS=${GATEWAY_MAX_WORKERS:-""}       # 5 = default
+fi
+
+if ! declare -p GATEWAY_DRIVER_POOL &> /dev/null; then
+export GATEWAY_DRIVER_POOL=${GATEWAY_DRIVER_POOL:-""}        
+fi
+
+if ! declare -p GATEWAY_WORKER_POOL &> /dev/null; then
+export GATEWAY_WORKER_POOL=${GATEWAY_WORKER_POOL:-""}       
 fi
 
 export GATEWAY_PIPELINE_CONTINUOUS=${GATEWAY_PIPELINE_CONTINUOUS:-"true"}   # cannot be false
@@ -154,6 +174,7 @@ CONT_OR_EXIT() {
         return 0
     fi
 }
+export -f CONT_OR_EXIT
 
 # display AZ commands
 AZ() {
@@ -256,7 +277,7 @@ GCLOUD_INIT() {
     export GCLOUD_ZONE="$(jq -r ".compute.zone" /tmp/gcloud_stdout.$$)"
 }
 
-# display AZ commands
+# display GLCOUD commands
 GCLOUD() {
     local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
     # stdout and stderr file names
@@ -276,6 +297,36 @@ GCLOUD() {
     return $?
 }
 export -f GCLOUD
+
+
+OCI_INIT() {
+
+    echo -e "oci setup config"
+    echo -e "-------\n"
+
+}
+export -f OCI_INIT
+
+# display OCI commands
+OCI() {
+    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
+    # stdout and stderr file names
+    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/oci_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/oci_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local RC
+
+    PWMASK="$@"
+    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
+    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+    echo -n oci "${PWMASK}"
+    oci "$@" >${DB_STDOUT} 2>${DB_STDERR}
+
+    RC=$?
+    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
+    return $?
+}
+export -f OCI
 
 DBX() {
     local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
@@ -366,7 +417,7 @@ PSQL() {
     local DB_USERNAME=${DB_USERNAME:-${USER_USERNAME}}
     local DB_PASSWORD=${DB_PASSWORD:-${USER_PASSWORD}}
     local DB_HOST_FQDN=${DB_HOST_FQDN}
-    local DB_PORT=${DB_PORT:-${1433}}
+    local DB_PORT=${DB_PORT:-${5432}}
     local DB_CATALOG=${DB_CATALOG:-"postgres"}
     local DB_LOGIN_TIMEOUT=${DB_LOGIN_TIMEOUT:-10}
     local DB_SSLMODE=${DB_SSLMODE:-"allow"}
@@ -409,6 +460,53 @@ PSQL() {
 }
 export -f PSQL
  
+MYSQLCLI() {
+    local DB_USERNAME=${DB_USERNAME:-${USER_USERNAME}}
+    local DB_PASSWORD=${DB_PASSWORD:-${USER_PASSWORD}}
+    local DB_HOST_FQDN=${DB_HOST_FQDN}
+    local DB_PORT=${DB_PORT:-${1433}}
+    local DB_CATALOG=${DB_CATALOG:-"mysql"}
+    local DB_LOGIN_TIMEOUT=${DB_LOGIN_TIMEOUT:-10}
+    local DB_SSLMODE=${DB_SSLMODE:-"allow"}
+    local DB_URL=${DB_URL:-""}
+    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
+    # stdout and stderr file names
+    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
+    local DB_STDOUT=${DB_STDOUT:-"/tmp/mysql_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_STDERR=${DB_STDERR:-"/tmp/mysql_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
+    local DB_URL
+    if [[ -z $DB_URL ]]; then
+        DB_URL="--user ${DB_USERNAME} --host ${DB_HOST_FQDN} --port ${DB_PORT} --database ${DB_CATALOG}"
+    fi
+
+    PWMASK="${*}"
+    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
+    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
+
+    if [[ $DB_PASSWORD == $DBA_PASSWORD ]]; then
+        echo "MYSQL_PWD=\$DBA_PASSWORD mysql ${DB_URL} ${PWMASK}" 
+    elif [[ $DB_PASSWORD == $USER_PASSWORD ]]; then
+        echo "MYSQL_PWD=\$USER_PASSWORD mysql ${DB_URL} ${PWMASK}" 
+    else
+        echo "mysql ${DB_URL} ${PWMASK}"     
+    fi
+
+    export MYSQL_PWD=$DB_PASSWORD
+    if [[ -t 0 ]]; then
+        # stdin is attached
+        mysql ${DB_URL} "${@}" 
+    else
+        # running in batch mode
+        mysql ${DB_URL} --batch --skip-column-names --silent "${@}" >${DB_STDOUT} 2>${DB_STDERR} 
+    fi
+
+    RC=$?
+    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
+    return $?
+}
+export -f MYSQLCLI
+
+
 export WHOAMI_USERNAME=${WHOAMI_USERNAME:-$(whoami)}
 export WHOAMI="$(echo "$WHOAMI_USERNAME" | tr -d '\-\.\_')"
 
@@ -421,6 +519,7 @@ export DBX_USERNAME_NO_DOMAIN="${DBX_USERNAME%%@*}"                  # remove ev
 export DBX_USERNAME_NO_DOMAIN_DOT="${DBX_USERNAME_NO_DOMAIN//./_}"   # . to _
 
 export RG_NAME=${RG_NAME:-${WHOAMI}-rg}                # resource group name
+export DBX_WORKSPACE_PATH=${DBX_WORKSPACE_PATH:-"/Users/${DBX_USERNAME}/lfcddemokit"}
 
 # return 3 variables
 read_fqdn_dba_if_host(){
@@ -460,7 +559,7 @@ export CATALOG_BASENAME=${CATALOG_BASENAME:-$(pwgen -1AB 8)}
 export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \-\[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
 export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \-\[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
 
-export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}}
+export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}_lfcddemo}
 export DB_PORT=${DB_PORT:-""}
 export SECRETS_SCOPE=${SECRETS_SCOPE:-${WHOAMI}}
 
@@ -509,6 +608,31 @@ TEST_DB_CONNECT() {
 # #############################################################################
 # retrieve setting from secrets if exists
 
+secrets_set_all_read() {
+    local SECRETS_SCOPE="$SECRETS_SCOPE"
+    local DB_EXIT_ON_ERROR="${DB_EXIT_ON_ERROR:-PRINT_RETURN}"
+
+    if ! DB_EXIT_ON_ERROR="${DB_EXIT_ON_ERROR}" DBX secrets put-acl "$SECRETS_SCOPE" "account users" READ; then
+        # try with users
+        DB_EXIT_ON_ERROR="${DB_EXIT_ON_ERROR}" DBX secrets put-acl "$SECRETS_SCOPE" "users" READ
+    fi
+}
+
+# return 0 to save
+# return 1 to not save
+should_save_secrets() {
+    if [[ -z "$DELETE_DB_AFTER_SLEEP" ]] && [[ "${DB_HOST_CREATED}" == "1" || "${DB_PASSWORD_CHANGED}" == "1" ]]; then 
+        echo "writing secrets for created database that won't be deleted"
+        return 0
+    elif [[  "${SECRETS_RETRIEVED}" == '1' && "${DB_PASSWORD_CHANGED}" == "1" ]] ; then
+        echo "writing secrets for existing database with new DBA password"
+        return 0
+    else
+        echo "don't save secrets"
+        return 1
+    fi
+}
+export -f should_save_secrets
 
 save_before_secrets() {
     for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
@@ -525,6 +649,7 @@ get_secrets() {
     local secrets_key=${1:-"key_value"}
     if DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets get-secret "${SECRETS_SCOPE}" "${secrets_key}"; then
         v="$(jq -r '.value | @base64d' /tmp/dbx_stdout.$$)"
+        CONNECTION_TYPE=""  # backward compat.  CONNECTION_TYPE="" when not present for SQLSERVER
         if [[ -n $v ]]; then 
             eval "$v"
             SECRETS_RETRIEVED=1 
@@ -537,24 +662,70 @@ get_secrets() {
     fi
 
 }
+export -f get_secrets
+
+json_to_associative_array() {
+    local -n json_to_associative_array_credentials="$1"  # nameref to associative array (passed by name)
+    local json_file="$json_file"                         # path to JSON file
+
+    while IFS='=' read -r key value; do
+        value="${value%\'}"                               # strip trailing single quote
+        value="${value#\'}"                               # strip leading single quote
+        echo "$key=$value"
+        json_to_associative_array_credentials["$key"]="$value"
+    done < <(yq -o=shell "$json_file")
+}
+export -f json_to_associative_array
 
 put_secrets() {
     local secrets_key=${1:-"$DB_HOST"}
-    local key_value=""
+    local secretes_format=${2:-""}
+    local key_value="${3:-""}"
+    local secrets_key="${secrets_key}"
+
     # create secret scope if does not exist
     if ! DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets list-secrets "${SECRETS_SCOPE}"; then
         if ! DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets create-scope "${SECRETS_SCOPE}"; then
             cat /tmp/dbx_stderr.$$; return 1;
         fi
     fi
-    for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD; do
-        key_value="export ${k}='${!k}';$key_value"
-    done
+
+    if [[ -z "$key_value" ]] && [[ "${secretes_format}" == "json" ]]; then
+      secrets_key="${secrets_key}_json"
+key_value=$(yq -o json <<EOF   
+version: v2
+cloud_db_type: $CLOUD_DB_TYPE
+db_type: $DB_TYPE
+connection_type: $CONNECTION_TYPE
+catalog: $DB_CATALOG  
+schema: $DB_SCHEMA
+name: $DB_HOST  
+host_fqdn: $DB_HOST_FQDN  
+port: $DB_PORT  
+password: $USER_PASSWORD 
+user: $USER_USERNAME  
+replication_mode: both
+cloud: 
+  provider: ${CLOUD_DB_TYPE%%-*}
+  location: $CLOUD_LOCATION
+  resource_group: $RG_NAME
+dba:
+  user: $DBA_USERNAME 
+  password: $DBA_PASSWORD  
+EOF
+)
+
+    else
+        for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD CONNECTION_TYPE; do
+            key_value="export ${k}='${!k}';$key_value"
+        done
+    fi
+
     if ! DBX ${DBX_PROFILE_SECRETS:+"--profile" "$DBX_PROFILE_SECRETS"} secrets put-secret "${SECRETS_SCOPE}" "${secrets_key}" --string-value "$key_value"; then
         cat /tmp/dbx_stderr.$$; return 1;
     fi
 }
-export put_secrets
+export -f put_secrets
 
 # #############################################################################
 
@@ -576,9 +747,88 @@ SQLCLI_USER() {
 export -f SQLCLI_USER
 
 # #############################################################################
+# connection 
+
+# input is stdin, $1=connection name $2=SECRETS_SCOPE
+# output is at STATE[conn_create_json] STATE[conn_patch_json]
+connection_spec_from_json() {
+    local -n OUTPUT="${1}"
+
+    local CONNECTION_NAME="${CONNECTION_NAME}"
+    local SECRETS_SCOPE="${SECRETS_SCOPE}"
+
+    OUTPUT[conn_create_json]=$(echo "${OUTPUT[secret_value_json]}" | jq --arg name "$CONNECTION_NAME" --arg scope "$SECRETS_SCOPE" '{
+  name: ($name),
+  connection_type: ((.connection_type // .db_type // "SQLSERVER") | ascii_upcase),
+  comment: ("{\"secrets\": {\"scope\": \"" + $scope + "\", \"key\": \"" + .name + "\"}}"),
+  options: ({
+    host: .host_fqdn,
+    port: (.port | tostring),
+    user: .user,
+    password: .password
+  } + if ((.connection_type // .db_type // "SQLSERVER") | ascii_upcase) == "SQLSERVER" then {trustServerCertificate: "true"} else {} end)
+}'
+    )
+
+    OUTPUT[conn_patch_json]=$(echo "${OUTPUT[conn_create_json]}" | jq 'del(.connection_type)')
+}
+export -f connection_spec_from_json
+
+connection_spec_from_env() {
+    local -n OUTPUT="${1}"
+
+    OUTPUT[conn_create_json]=$(echo "${OUTPUT[secret_value_env]}" | yq -o json <<EOF
+name: $CONNECTION_NAME
+connection_type: $CONNECTION_TYPE
+comment: '{"secrets": {"scope": "$SECRETS_SCOPE", "key": "$DB_HOST"}}'
+options: 
+    host: $DB_HOST_FQDN
+    port: $DB_PORT
+    user: $USER_USERNAME
+    password: $USER_PASSWORD
+    $(if [[ "${CONNECTION_TYPE^^}" == "SQLSERVER" ]]; then printf "trustServerCertificate: true"; fi)
+EOF
+)
+OUTPUT[conn_patch_json]=$(echo "${OUTPUT[conn_create_json]}" | jq 'del(.connection_type)')
+}
+export -f connection_spec_from_env
+
+# allow all users to READ (use connection)
+connection_set_all_read() {
+    local CONNECTION_NAME="${CONNECTION_NAME}"
+    local connection_permission='{ "changes": [ { "add": [ "USE_CONNECTION" ], "principal": "account users" } ] }'
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/permissions/connection/"${CONNECTION_NAME}" --json "$connection_permission"
+}
+export -f connection_set_all_read
+
+
+connection_create_or_replace() {
+    local -n OUTPUT="${1}"
+    #if [[ -z "${OUTPUT[*]}" ]]; then echo "connection_create_or_replace \$1 not specified"; kill -INT $$; fi 
+
+    # get the connection name
+    local CONNECTION_NAME="$(echo "${OUTPUT[conn_create_json]}" | jq -r '.name')"
+    OUTPUT[connection_created]=""
+
+    # create or replace
+    if ! DBX connections get "$CONNECTION_NAME"; then
+        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api post /api/2.1/unity-catalog/connections --json "${OUTPUT[conn_create_json]}"
+    else 
+        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/connections/"${CONNECTION_NAME}" --json "${OUTPUT[conn_patch_json]}"
+    fi
+
+    # save the connection id
+    CONNECTION_ID=$(jq -r '.connection_id' /tmp/dbx_stdout.$$)
+    OUTPUT[CONNECTION_ID]="${CONNECTION_ID}"
+    export CONNECTION_ID
+
+    # make connection avail to all
+    CONNECTION_NAME="$CONNECTION_NAME" connection_set_all_read 
+}
+export -f connection_create_or_replace
+
 
 # make sure executables are there are with correct versions
-
 for exe in curl ipcalc pwgen ttyd tmux wget; do
     if ! command -v $exe &> /dev/null; then
     echo -e "\n

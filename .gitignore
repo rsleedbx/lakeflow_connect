@@ -1,3 +1,4 @@
+databricks.yml
 nohup.out
 terraform.tfstate*
 .terraform.*
@@ -174,3 +175,5 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+.databricks

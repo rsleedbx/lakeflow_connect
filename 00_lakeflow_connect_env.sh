@@ -385,6 +385,12 @@ SQLCMD() {
 }
 export -f SQLCMD
 
+# Helper to run SQL as DBA user
+SQLCMD_DBA() {
+    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" SQLCMD "${@}"
+}
+export -f SQLCMD_DBA
+
 SQLCMD_OLD() {
     local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
     # stdout and stderr file names

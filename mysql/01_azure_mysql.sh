@@ -31,7 +31,7 @@ AZ_INIT
 # export functions
 
 SQLCLI() {
-    DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_SCHEMA}" MYSQLCLI "${@}"
+    DB_USERNAME="${DB_USERNAME:-$USER_USERNAME}" DB_PASSWORD="${DB_PASSWORD-$USER_PASSWORD}" DB_CATALOG="${DB_CATALOG:-$DB_SCHEMA}" MYSQLCLI "${@}"
 }
 export -f SQLCLI
 
@@ -46,7 +46,7 @@ SQLCLI_USER() {
 export -f SQLCLI_USER
 
 password_reset_db() {
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ mysql flexible-server update -y -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ mysql flexible-server update -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"
 }
 export -f password_reset_db
 

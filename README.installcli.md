@@ -35,6 +35,7 @@ Open a terminal on Mac OSX and install the following tools.
     ```bash
     brew tap databricks/tap
     brew install databricks
+    brew upgrade databricks
     databricks auth login
     ```
 

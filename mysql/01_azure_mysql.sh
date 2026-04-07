@@ -85,13 +85,13 @@ if [[ -n "$DB_HOST" && "$DB_HOST" != *"-${DB_SUFFIX}" ]]; then
     DB_HOST_FQDN=""
 fi
 
-# get avail server if not specified
-if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
+# pick first server in RG only when DB_HOST was not set (user-set DB_HOST wins)
+if [[ -z "$DB_HOST" ]] && \
     AZ mysql flexible-server list -g "${RG_NAME}"; then
-    
+
     read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.DBforMySQL/flexibleServers")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
-    if [[ -n $x1 && -n $x2 && -n $x3 && "$x1" == *"-${DB_SUFFIX}" ]]; then 
-        DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; 
+    if [[ -n $x1 && -n $x2 && -n $x3 && "$x1" == *"-${DB_SUFFIX}" ]]; then
+        DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3";
     fi
 fi
 

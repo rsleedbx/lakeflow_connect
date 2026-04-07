@@ -680,6 +680,31 @@ json_to_associative_array() {
 }
 export -f json_to_associative_array
 
+# LfcCredential V2 requires db_type ∈ {postgresql, mysql, sqlserver, oracle} (lowercase).
+# CONNECTION_TYPE is the engine (e.g. MYSQL); DB_TYPE is often a cloud slug (e.g. azure-mysql).
+lfc_secrets_v2_db_type() {
+    case "${CONNECTION_TYPE^^}" in
+        MYSQL|MARIADB) echo mysql; return 0 ;;
+        POSTGRESQL|POSTGRES) echo postgresql; return 0 ;;
+        SQLSERVER) echo sqlserver; return 0 ;;
+        ORACLE) echo oracle; return 0 ;;
+    esac
+    local d="${DB_TYPE,,}"
+    case "$d" in
+        *mysql*|*mariadb*) echo mysql; return 0 ;;
+        *oracle*) echo oracle; return 0 ;;
+        *postgres*|*postgresql*) echo postgresql; return 0 ;;
+        *sqlserver*|*sql-server*) echo sqlserver; return 0 ;;
+        *-pg) echo postgresql; return 0 ;;
+        mysql) echo mysql; return 0 ;;
+        postgresql|postgres) echo postgresql; return 0 ;;
+        sqlserver) echo sqlserver; return 0 ;;
+        oracle) echo oracle; return 0 ;;
+    esac
+    return 1
+}
+export -f lfc_secrets_v2_db_type
+
 put_secrets() {
     local secrets_key=${1:-"$DB_HOST"}
     local secretes_format=${2:-""}
@@ -695,10 +720,15 @@ put_secrets() {
 
     if [[ -z "$key_value" ]] && [[ "${secretes_format}" == "json" ]]; then
       secrets_key="${secrets_key}_json"
-key_value=$(yq -o json <<EOF   
+      local LFC_SECRETS_V2_DB_TYPE
+      if ! LFC_SECRETS_V2_DB_TYPE="$(lfc_secrets_v2_db_type)"; then
+        echo "put_secrets: cannot map V2 db_type from CONNECTION_TYPE='${CONNECTION_TYPE}' DB_TYPE='${DB_TYPE}' (need postgresql|mysql|sqlserver|oracle)" >&2
+        return 1
+      fi
+      key_value=$(yq -o json <<EOF
 version: v2
 cloud_db_type: $CLOUD_DB_TYPE
-db_type: $DB_TYPE
+db_type: $LFC_SECRETS_V2_DB_TYPE
 connection_type: $CONNECTION_TYPE
 catalog: $DB_CATALOG  
 schema: $DB_SCHEMA
@@ -716,7 +746,7 @@ dba:
   user: $DBA_USERNAME 
   password: $DBA_PASSWORD  
 EOF
-)
+      )
 
     else
         for k in DB_HOST DB_HOST_FQDN DB_PORT DB_CATALOG DBA_USERNAME DBA_PASSWORD USER_USERNAME USER_PASSWORD CONNECTION_TYPE; do

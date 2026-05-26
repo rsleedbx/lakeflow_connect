@@ -1,3 +1,4 @@
+.DS_Store
 databricks.yml
 nohup.out
 terraform.tfstate*

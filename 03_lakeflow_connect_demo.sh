@@ -173,6 +173,8 @@ ig_schema_spec="$(echo '{
 '${PUBLISH_EVENT_LOG:+"\"event_log\": {\"catalog\": \"$ELOG_CATALOG\",\"schema\": \"$ELOG_SCHEMA\",\"name\": \"ingestion_elog_${INGESTION_PIPELINE_ID//-/_}\"},"}' 
 "continuous": "'"$INGESTION_PIPELINE_CONTINUOUS"'",
 "development": "'"$PIPELINE_DEV_MODE"'",
+"catalog": "'"$TARGET_CATALOG"'",
+"schema": "'"$TARGET_SCHEMA"'",
 "ingestion_definition": {
   "ingestion_gateway_id": "'"$GATEWAY_PIPELINE_ID"'",
   "source_type": "'"$SOURCE_TYPE"'",

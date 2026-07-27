@@ -9,10 +9,11 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
-export DB_TYPE=azure-pg
+export DB_TYPE=postgres
 export DB_SUFFIX=azure-pg
 export CONNECTION_TYPE=POSTGRESQL
 export SOURCE_TYPE=$CONNECTION_TYPE
+export CLOUD_DB_TYPE=azure-pg
 
 # auto set the connection name
 if [[ "${WHOAMI}" == "lfcddemo" ]] && [[ -z "${CONNECTION_NAME}" || "${CONNECTION_NAME}" != *"-${DB_TYPE}" ]]; then
@@ -56,7 +57,7 @@ delete_db() {
 export -f delete_db
 
 firewall_rule_add() {
-for fw_rule in "${@}"; do
+for fw_rule in ${*}; do
     read -rd "\n" address host_min host_max <<< \
         "$(ipcalc -bn "${fw_rule}" | awk -F'[:[:space:]]+' '/^HostMin|^HostMax|^Address/ {print $(NF-1)}')"
     fw_rule_name="$(echo "${fw_rule}" | tr [./] _)"
@@ -65,9 +66,10 @@ for fw_rule in "${@}"; do
         host_min="$address"
         host_max="$address"
     fi
-    if ! AZ  postgres flexible-server firewall-rule show --rule-name "${fw_rule_name}" --name "${DB_HOST}" -g "${RG_NAME}"; then
-        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server firewall-rule create --rule-name "${fw_rule_name}" --name "$DB_HOST" -g "${RG_NAME}" --start-ip-address "${host_min}" --end-ip-address "${host_max}"
-    fi
+    AZ postgres flexible-server firewall-rule create --name "${fw_rule_name}" --server-name "$DB_HOST" -g "${RG_NAME}" --start-ip-address "${host_min}" --end-ip-address "${host_max}"
+    #if ! AZ  postgres flexible-server firewall-rule show --name "${fw_rule_name}" --server-name "${DB_HOST}" -g "${RG_NAME}"; then
+    #  DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server firewall-rule create --name "${fw_rule_name}" --server-name "$DB_HOST" -g "${RG_NAME}" --start-ip-address "${host_min}" --end-ip-address "${host_max}"
+    #fi
 done
 }
 
@@ -176,16 +178,17 @@ if ! AZ postgres flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
     DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ provider register --wait --namespace Microsoft.DBforPostgreSQL
 
     # sql server create does not support tags
+    # default catalog created
+    # default Standard_B2s is the lowest allowed
     DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
         --database "${DB_CATALOG}" \
-        --create-default-database Enabled \
         --version 17 \
         --node-count 1 \
         --public-access Enabled \
         --storage-size 32 \
         --tier Burstable \
-        --sku-name Standard_B1ms \
+        --sku-name Standard_B2s \
         --admin-user "${DBA_USERNAME}" \
         --admin-password "${DBA_PASSWORD}"
 
@@ -219,9 +222,9 @@ echo -e "------------------------------------------------\n"
 
 # convert CIDR to range 
 
-DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server firewall-rule list -n "${DB_HOST}" -g "${RG_NAME}"
+DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server firewall-rule list --server-name "${DB_HOST}" -g "${RG_NAME}"
 if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
-    firewall_rule_add "${DB_FIREWALL_CIDRS[@]}"
+    firewall_rule_add "${DB_FIREWALL_CIDRS[*]}"
 fi
 
 echo -e "\nAZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${DB_HOST}/networking \n"

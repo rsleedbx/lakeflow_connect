@@ -631,7 +631,7 @@ should_save_secrets() {
         echo "writing secrets for existing database with new DBA password"
         return 0
     else
-        echo "don't save secrets"
+        echo -e "don't save secrets. manually run if needed: \n put_secrets  \n put_secrets \${DB_HOST}_json json "    # json format for easier parsing"
         return 1
     fi
 }

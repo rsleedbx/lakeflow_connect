@@ -104,6 +104,8 @@ CONNECTION_ID=$(jq -r '.connection_id' /tmp/dbx_stdout.$$)
 STATE[CONNECTION_ID]="${CONNECTION_ID}"
 export CONNECTION_ID
 
+kill -INT $$
+
 # #############################################################################
 
 if [[ -n "$REMOVE_AFTER" ]]; then

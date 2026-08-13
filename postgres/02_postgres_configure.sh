@@ -65,10 +65,24 @@ DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASS
 # #############################################################################
 # create user login.  user by default = role + login
 
+# Drop stale auto-picks of Lakeflow/system roles (e.g. from DDL audit objects).
+if [[ -n "${USER_USERNAME:-}" ]] && [[ "${USER_USERNAME}" == lakeflow_* || "${USER_USERNAME}" == azure* || "${USER_USERNAME}" == pg_* ]]; then
+    echo "USER_USERNAME=${USER_USERNAME} looks like a system/Lakeflow role; resetting to USER_BASENAME=${USER_BASENAME}"
+    USER_USERNAME="${USER_BASENAME}"
+fi
+
 if [[ -z "$USER_USERNAME" || "$USER_USERNAME" == "$USER_BASENAME" ]]; then
-    DB_CATALOG="postgres" SQLCLI_DBA -c "select usename from pg_user where usename not in ('azuresu', 'rdsadmin', 'replication')" </dev/null
-    if grep -q -v -m 1 "^${DBA_USERNAME}$" /tmp/psql_stdout.$$; then 
-        USER_USERNAME=$(grep -v -m 1 "^${DBA_USERNAME}$" /tmp/psql_stdout.$$)
+    DB_CATALOG="postgres" SQLCLI_DBA -c "
+        select usename from pg_user
+        where usename not in ('azuresu', 'rdsadmin', 'replication', 'azure_pg_admin', 'azure_superuser')
+          and usename not like 'pg\\_%'
+          and usename not like 'azure%'
+          and usename not like 'lakeflow\\_%'
+          and usename <> '${DBA_USERNAME}'
+        order by usename
+    " </dev/null
+    if [[ -s /tmp/psql_stdout.$$ ]] && grep -q -m 1 '.' /tmp/psql_stdout.$$; then
+        USER_USERNAME=$(head -n 1 /tmp/psql_stdout.$$)
         echo "Retrieving USER_USERNAME=$USER_USERNAME"
     else
         USER_USERNAME="$USER_BASENAME"
@@ -164,9 +178,20 @@ export -f db_enable_replication_slot
 
 # #############################################################################
 
-# create schema
+# create schema (DBA creates/owns transfer so re-runs work across users)
 
-DB_CATALOG="$DB_CATALOG" SQLCLI -c "create schema if not exists ${DB_SCHEMA}" </dev/null
+echo -e "Creating schema ${DB_SCHEMA} owned by ${USER_USERNAME}\n"
+
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI_DBA <<EOF
+CREATE SCHEMA IF NOT EXISTS ${DB_SCHEMA} AUTHORIZATION ${USER_USERNAME};
+ALTER SCHEMA ${DB_SCHEMA} OWNER TO ${USER_USERNAME};
+GRANT ALL ON SCHEMA ${DB_SCHEMA} TO ${USER_USERNAME};
+GRANT ALL ON ALL TABLES IN SCHEMA ${DB_SCHEMA} TO ${USER_USERNAME};
+GRANT ALL ON ALL SEQUENCES IN SCHEMA ${DB_SCHEMA} TO ${USER_USERNAME};
+ALTER DEFAULT PRIVILEGES IN SCHEMA ${DB_SCHEMA} GRANT ALL ON TABLES TO ${USER_USERNAME};
+ALTER DEFAULT PRIVILEGES IN SCHEMA ${DB_SCHEMA} GRANT ALL ON SEQUENCES TO ${USER_USERNAME};
+SELECT 1;
+EOF
 # /tmp/psql_stdout.$$ will be 0 if schema was created.  drop the schema when done
 if [[ ! -s /tmp/psql_stderr.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
     nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DB_STDOUT=~/nohup.out DB_STDERR=~/nohup.out DB_CATALOG="$DB_CATALOG" SQLCLI >>~/nohup.out 2>&1 << EOF &
@@ -181,13 +206,24 @@ fi
 
 # create tables
 
-DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
+echo -e "Creating tables\n"
+
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
     create table if not exists ${DB_SCHEMA}.intpk (pk serial primary key, dt timestamp);
     create table if not exists ${DB_SCHEMA}.dtix (dt timestamp);
 EOF
 
+# Ensure demo user owns existing tables (schema may predate a USER_USERNAME change)
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI_DBA <<EOF
+ALTER TABLE IF EXISTS ${DB_SCHEMA}.intpk OWNER TO ${USER_USERNAME};
+ALTER TABLE IF EXISTS ${DB_SCHEMA}.dtix OWNER TO ${USER_USERNAME};
+GRANT ALL ON ALL TABLES IN SCHEMA ${DB_SCHEMA} TO ${USER_USERNAME};
+GRANT ALL ON ALL SEQUENCES IN SCHEMA ${DB_SCHEMA} TO ${USER_USERNAME};
+SELECT 1;
+EOF
+
 if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
-DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
     insert into ${DB_SCHEMA}.intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
     insert into ${DB_SCHEMA}.dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
     select '${DB_SCHEMA}.intpk',max(pk) from ${DB_SCHEMA}.intpk;
@@ -210,15 +246,19 @@ fi
 # #############################################################################
 # publication + slot (after tables exist)
 
-db_replication_cleanup
-db_orphaned_publication_cleanup
-db_enable_replication_slot
-# [0-9]+ = datoid; ,${DB_CATALOG}, = database column (non-empty)
-if grep -qE "^${DB_SCHEMA},pgoutput,logical,[0-9]+,${DB_CATALOG}," /tmp/psql_stdout.$$; then
-    echo "replication ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"
+if [[ "${PG_PRECREATE_SLOT_PUB:-1}" == "1" ]]; then
+    db_replication_cleanup
+    db_orphaned_publication_cleanup
+    db_enable_replication_slot
+    # [0-9]+ = datoid; ,${DB_CATALOG}, = database column (non-empty)
+    if grep -qE "^${DB_SCHEMA},pgoutput,logical,[0-9]+,${DB_CATALOG}," /tmp/psql_stdout.$$; then
+        echo "replication ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"
+    else
+        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+        return 1
+    fi
 else
-    cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
-    return 1
+    echo "PG_PRECREATE_SLOT_PUB=0: skipping slot/publication cleanup and create"
 fi
 
 # #############################################################################
@@ -233,6 +273,7 @@ DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CAT
 
 # Add audit table to the demo publication (must run as publication owner / DBA)
 DDL_AUDIT_TABLE="lakeflow_ddl_audit_table_1_0"
+if [[ "${PG_PRECREATE_SLOT_PUB:-1}" == "1" ]]; then
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" \
   DB_CATALOG="${DB_CATALOG}" SQLCLI <<EOF
 DO \$\$
@@ -247,6 +288,9 @@ BEGIN
   END IF;
 END \$\$;
 EOF
+else
+    echo "PG_PRECREATE_SLOT_PUB=0: skipping ALTER PUBLICATION for DDL audit table"
+fi
 
 # Verify audit objects
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" \

@@ -162,8 +162,8 @@ if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
 DB_CATALOG="${DB_SCHEMA}" SQLCLI <<EOF
     insert into ${DB_SCHEMA}.intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
     insert into ${DB_SCHEMA}.dtix (pk,dt) values (1,CURRENT_TIMESTAMP),(2,CURRENT_TIMESTAMP),(3,CURRENT_TIMESTAMP);
-    select '${DB_SCHEMA}.intpk',max(pk) from ${DB_SCHEMA}.intpk;
-    select '${DB_SCHEMA}.dtix',max(dt) from ${DB_SCHEMA}.dtix limit 1;    
+    select concat('${DB_SCHEMA}.intpk,', max(pk)) from ${DB_SCHEMA}.intpk;
+    select concat('${DB_SCHEMA}.dtix,', max(dt)) from ${DB_SCHEMA}.dtix limit 1;    
 EOF
 
 # .\+ = one or more so that nulls are not accepted

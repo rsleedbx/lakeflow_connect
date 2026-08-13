@@ -9,6 +9,14 @@ deploy/tf/tfplan
 deploy/tf/.provider-cache/
 deploy/tf/.provider-build/
 deploy/tf/*.bak
+vm/az/terraform/.terraform/
+vm/az/terraform/.terraform.*
+vm/az/terraform/terraform.tfstate*
+vm/az/terraform/tfplan
+vm/az/terraform/terraform.tfvars
+vm/az/terraform/cloud_init.tfvars.json
+vm/az/terraform/.ssh/
+vm/az/ansible/inventory.ini
 sqlserver/utility-script-*.sql
 postgres/lakeflow_pg_ddl_change_tracking-*.sql
 mysql/lakeflow_mysql_utility_script-*.sql

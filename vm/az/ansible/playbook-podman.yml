@@ -1,0 +1,29 @@
+---
+# Install Podman on Ubuntu 22.04 (Azure VM prototype)
+- name: Install Podman
+  hosts: vm
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Ensure apt cache is up to date
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install Podman and uidmap
+      ansible.builtin.apt:
+        name:
+          - podman
+          - uidmap
+        state: present
+
+    - name: Verify Podman is installed
+      ansible.builtin.command:
+        cmd: podman --version
+      register: podman_version
+      changed_when: false
+
+    - name: Show Podman version
+      ansible.builtin.debug:
+        msg: "{{ podman_version.stdout }}"

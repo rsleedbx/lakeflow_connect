@@ -59,8 +59,8 @@ case "${COMPUTE_INGEST}" in
     "serverless") INGEST_COMPUTE_TAG="srvless" ;;
     *) INGEST_COMPUTE_TAG="default" ;;
 esac
-export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${PIPELINE_TYPE_TAG}_${GATEWAY_COMPUTE_TAG}_GW
-export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${PIPELINE_TYPE_TAG}_${INGEST_COMPUTE_TAG}_IG
+export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${SOURCE_TYPE}_${PIPELINE_TYPE_TAG}_${GATEWAY_COMPUTE_TAG}_GW
+export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${SOURCE_TYPE}_${PIPELINE_TYPE_TAG}_${INGEST_COMPUTE_TAG}_IG
 export CLEANUP_JOB_NAME=${WHOAMI}_${NINE_CHAR_ID}_cleanup
 # used for the pipelines — default catalog from workspace settings when unset
 if [[ -z "${TARGET_CATALOG:-}" ]]; then
@@ -235,6 +235,7 @@ export SOURCE_TYPE DB_CATALOG DB_SCHEMA TARGET_CATALOG TARGET_SCHEMA
 export INGESTION_PIPELINE_NAME INGESTION_PIPELINE_CONTINUOUS PIPELINE_DEV_MODE
 export COMPUTE_INGEST CONNECTION_NAME CDC_QBC CDC_CT_MODE
 export GATEWAY_PIPELINE_ID PUBLISH_EVENT_LOG ELOG_CATALOG ELOG_SCHEMA
+export PG_PRECREATE_SLOT_PUB="${PG_PRECREATE_SLOT_PUB:-1}"
 
 # Shared cdc / cdc_single_pipeline (icdc) ingestion spec.
 # Differs mainly by gateway_id vs connection_name (+ MANAGED_INGESTION extras for icdc).
@@ -312,6 +313,23 @@ ig_cdc_spec="$(jq -n '
        }
        | .ingestion_definition += {connection_name: env.CONNECTION_NAME, connector_type: "CDC"}
      end)
+  | (if env.SOURCE_TYPE == "POSTGRESQL" and env.PG_PRECREATE_SLOT_PUB == "1" then
+       .ingestion_definition += {
+         source_configurations: [
+           {
+             catalog: {
+               source_catalog: env.DB_CATALOG,
+               postgres: {
+                 slot_config: {
+                   slot_name: env.DB_SCHEMA,
+                   publication_name: (env.DB_SCHEMA + "_pub")
+                 }
+               }
+             }
+           }
+         ]
+       }
+     else . end)
   | (if env.PUBLISH_EVENT_LOG != "" then . + {
         event_log: {
           catalog: env.ELOG_CATALOG,
@@ -491,23 +509,34 @@ DB_EXIT_ON_ERROR="PRINT_EXIT" DBX permissions update jobs      "$INGESTION_JOB_I
 echo -e "\n Start workload"
 echo -e   "---------------\n"
 
+_lg_started=0
 if [[ ! -z "$sql_dml_generator" ]] && [[ $DML_INTERVAL_SEC -gt 0 ]]; then
-    SQLCLI >/dev/null 2>&1 <<< $(echo "$sql_dml_generator") &
-    export LOAD_GENERATOR_PID=$!
+    if [[ -n "${LOAD_GENERATOR_PID:-}" ]] && kill -0 "$LOAD_GENERATOR_PID" 2>/dev/null; then
+        echo "Load Generator: already running with PID=$LOAD_GENERATOR_PID; not starting another."
+    else
+        if [[ -n "${LOAD_GENERATOR_PID:-}" ]]; then
+            echo "Load Generator: PID=$LOAD_GENERATOR_PID is no longer running; restarting."
+        fi
+        SQLCLI >/dev/null 2>&1 <<< $(echo "$sql_dml_generator") &
+        export LOAD_GENERATOR_PID=$!
+        _lg_started=1
+    fi
 else
     export LOAD_GENERATOR_PID=""
 fi
 
-if [[ ! -z "$LOAD_GENERATOR_PID" ]]; then
-if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    nohup sleep "${STOP_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
+if [[ "$_lg_started" -eq 1 ]]; then
+    if [[ -n "${STOP_AFTER_SLEEP}" ]]; then
+        nohup sleep "${STOP_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
+    fi
+    if [[ -z "${STOP_AFTER_SLEEP}" ]] && [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
+        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
+    fi
+    echo "Load Generator: started with PID=$LOAD_GENERATOR_PID."
+    echo ""
 fi
-if [[ -z "${STOP_AFTER_SLEEP}" ]] && [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
-fi
-echo "Load Generator: started with PID=$LOAD_GENERATOR_PID."
-echo ""
-fi
+unset _lg_started
+
 
 # #############################################################################
 

@@ -154,6 +154,17 @@ export CDC_QBC=${CDC_QBC:-"cdc"}
 export COMPUTE_GATEWAY=${COMPUTE_GATEWAY:-"default"}
 export COMPUTE_INGEST=${COMPUTE_INGEST:-"default"}
 
+# Postgres: cleanup + pre-create slot/publication in 02; pass slot_config in 03.
+# Set to 0 later when notebook/Databricks owns slot lifecycle.
+case "${PG_PRECREATE_SLOT_PUB:-1}" in
+  1|true|TRUE|yes|YES|y|Y) export PG_PRECREATE_SLOT_PUB="1" ;;
+  0|false|FALSE|no|NO|n|N) export PG_PRECREATE_SLOT_PUB="0" ;;
+  *)
+    echo "PG_PRECREATE_SLOT_PUB=${PG_PRECREATE_SLOT_PUB} must be 1/true or 0/false; defaulting to 1" >&2
+    export PG_PRECREATE_SLOT_PUB="1"
+    ;;
+esac
+
 # ingestion pipeline options
 export SCD_TYPE=${SCD_TYPE:-""} # SCD_TYPE_1 | SCD_TYPE_2
 export INGESTION_PIPELINE_CONTINUOUS=${INGESTION_PIPELINE_CONTINUOUS:-false}

@@ -111,16 +111,62 @@ fi
 db_replication_cleanup() {
     local GATEWAY_PIPELINE_ID=${1:-$GATEWAY_PIPELINE_ID}
 
-    DB_CATALOG="postgres" SQLCLI_DBA -c "select slot_name FROM pg_replication_slots where slot_name like 'dbx_%_$GATEWAY_PIPELINE_ID'" </dev/null
+    DB_CATALOG="postgres" SQLCLI -c "select slot_name FROM pg_replication_slots where slot_name like 'dbx_%_$GATEWAY_PIPELINE_ID'" </dev/null
     read -rd "\n" -a slot_names <<< "$(cat /tmp/psql_stdout.$$)"
     if [[ -n "${slot_names[*]}" ]]; then
         echo "slot name cleanup"
         for slot_name in "${slot_names[@]}"; do
-            DB_CATALOG="postgres" SQLCLI_DBA -c "select pg_drop_replication_slot('$slot_name');" 
+            DB_CATALOG="postgres" SQLCLI -c "select pg_drop_replication_slot('$slot_name');" 
         done
     fi
 }
 export -f db_replication_cleanup
+
+db_orphaned_publication_cleanup() {
+    echo "cleaning orphaned postgres publications"
+    echo "
+            DO $$
+            DECLARE
+                pub_record RECORD;
+                has_active_slots BOOLEAN;
+            BEGIN
+                -- Check if there are any active slots at all
+                SELECT EXISTS(SELECT 1 FROM pg_replication_slots WHERE active = true) INTO has_active_slots;
+                
+                -- Only drop publications if no active slots exist
+                IF NOT has_active_slots THEN
+                    FOR pub_record IN 
+                        SELECT pubname
+                        FROM pg_publication
+                        WHERE pubname LIKE 'dbx_pub_%' OR pubname LIKE '%_pub'
+                    LOOP
+                        RAISE NOTICE 'Dropping publication: %', pub_record.pubname;
+                        EXECUTE format('DROP PUBLICATION IF EXISTS %I', pub_record.pubname);
+                    END LOOP;
+                END IF;
+            END $$;
+    " | DB_CATALOG="postgres" SQLCLI
+}
+export -f db_orphaned_publication_cleanup
+
+db_enable_replication_slot() {
+    echo "CREATE PUBLICATION ${DB_SCHEMA}_pub FOR table ${DB_SCHEMA}.intpk, ${DB_SCHEMA}.dtix" | SQLCLI
+    echo "SELECT 'init' FROM pg_create_logical_replication_slot('${DB_SCHEMA}', 'pgoutput')" | SQLCLI
+    echo "SELECT * FROM pg_replication_slots WHERE slot_name = '${DB_SCHEMA}'" | SQLCLI
+}
+export -f db_enable_replication_slot
+
+
+db_replication_cleanup
+db_orphaned_publication_cleanup
+db_enable_replication_slot
+# [0-9]+ = datoid; ,${DB_CATALOG}, = database column (non-empty)
+if grep -qE "^${DB_SCHEMA},pgoutput,logical,[0-9]+,${DB_CATALOG}," /tmp/psql_stdout.$$; then
+    echo "replication ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"
+else
+    cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+    return 1
+fi
 
 # #############################################################################
 

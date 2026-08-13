@@ -96,15 +96,14 @@ if ! DBX connections get "$CONNECTION_NAME"; then
     STATE[connection_created]=1
 else
     # connections update does not update comments
-    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/connections/"$CONNECTION_NAME" --json "${STATE[conn_patch_json]}"
+    #DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/connections/$(echo -n "$CONNECTION_NAME" | jq -sRr @uri) --json "${STATE[conn_patch_json]}"
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX connections update $(echo -n "$CONNECTION_NAME" | jq -sRr @uri) --json "${STATE[conn_patch_json]}"
 fi
 
 # sometime in 2026, connection_name is used and not connection_id
 CONNECTION_ID=$(jq -r '.connection_id' /tmp/dbx_stdout.$$)
 STATE[CONNECTION_ID]="${CONNECTION_ID}"
 export CONNECTION_ID
-
-kill -INT $$
 
 # #############################################################################
 

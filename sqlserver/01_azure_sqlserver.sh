@@ -50,7 +50,9 @@ SQLCLI_USER() {
 export -f SQLCLI_USER
 
 password_reset_db() {
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql server update -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az sql server update -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"
 }
 export -f password_reset_db
 
@@ -58,11 +60,12 @@ start_db() {
     local skip_db_show="${1:-""}"
 
     if [[ -z "$skip_db_show" ]]; then
-        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql db show -n "$DB_CATALOG" -s "$DB_HOST" -g "${RG_NAME}"
+        CMD_EXIT_ON_ERROR=PRINT_EXIT
+        cmd_mask_azure_secrets
+        CMD az sql db show -n "$DB_CATALOG" -s "$DB_HOST" -g "${RG_NAME}"
     fi
     if [[ "Online" == "$(jq -r '.state' /tmp/az_stdout.$$)" ]]; then CONNECT_TIMEOUT=10; else CONNECT_TIMEOUT=120; fi
     if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG" "$CONNECT_TIMEOUT"; then
-        cat /tmp/az_stderr.$$
         return 1
     fi
 }
@@ -74,35 +77,41 @@ stop_db() {
 export -f stop_db
 
 delete_db() {
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}"
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}"
 }
 export -f delete_db
 
 delete_catalog() {
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"
 }
 export -f delete_catalog
 
 show_firewall() {
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"
 }
 export -f show_firewall
 
 firewall_rule_add() {
-for fw_rule in "${@}"; do
-    read -rd "\n" address host_min host_max <<< \
-        "$(ipcalc -bn "${fw_rule}" | awk -F'[:[:space:]]+' '/^HostMin|^HostMax|^Address/ {print $(NF-1)}')"
-    fw_rule_name="$(echo "${fw_rule}" | tr [./] _)"
-    if [[ -z $host_min || -z $host_max ]]; then
-        echo "${fw_rule} did not produce correct ${host_min} and/or ${host_max}.  Assuming /32"
-        host_min="$address"
-        host_max="$address"
-    fi
-    if ! AZ sql server firewall-rule show -n "${fw_rule_name}" -s "${DB_HOST}" -g "${RG_NAME}"; then
-        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql server firewall-rule create -n "${fw_rule_name}" -s "$DB_HOST" -g "${RG_NAME}" --start-ip-address ${host_min} --end-ip-address "${host_max}"
-    fi
-done
+    # Thin wrapper: list current rules, then sync via utils/azure-sql-firewall-rule.py
+    # Optional args are ignored; desired CIDRs come from DB_FIREWALL_CIDRS.
+    local _lfc_root="${_LFC_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"
+    python3 "${_lfc_root}/utils/azure-sql-firewall-rule.py" \
+        --server "${DB_HOST}" \
+        -g "${RG_NAME}" \
+        --existing-rules "/tmp/az_stdout.$$" \
+        --my-ip \
+        --apply
 }
+export -f firewall_rule_add
 # #############################################################################
 # load secrets if exists
 
@@ -124,16 +133,22 @@ fi
 
 # get avail sql server if not specified
 if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
-    [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "sq" ]] && \
-    AZ sql server list -g "${RG_NAME}"; then
-    
-    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/servers")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
-    if [[ -n $x1 && -n $x2 && -n $x3 ]]; then DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; fi
+    [[ -z "$AZ_DB_TYPE" || "$AZ_DB_TYPE" == "sq" ]]; then
+    cmd_mask_azure_secrets
+    CMD_EXIT_ON_ERROR=
+    if CMD az sql server list -g "${RG_NAME}"; then
+        read -rd "\n" x1 x2 x3 <<< "$(jq -r --arg suffix "-${AZ_DB_SUFFIX}" \
+          'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.Sql/servers" and (.name | endswith($suffix)))) | .name, .fullyQualifiedDomainName, .administratorLogin' \
+          /tmp/az_stdout.$$)"
+        if [[ -n $x1 && -n $x2 && -n $x3 ]]; then DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; fi
+    fi
 fi
 
 # get avail catalog if not specified
-if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]] && \
-    AZ sql db list -s "$DB_HOST" -g "${RG_NAME}"; then
+if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]]; then
+    cmd_mask_azure_secrets
+    CMD_EXIT_ON_ERROR=
+    if CMD az sql db list -s "$DB_HOST" -g "${RG_NAME}"; then
 
     x1=""
     # check if secrets exists for this host
@@ -152,13 +167,15 @@ if [[ -n "$DB_HOST" ]] && [[ -z "$DB_CATALOG" || "$DB_CATALOG" == "$CATALOG_BASE
         x1="$(jq -r --arg DB_CATALOG "master" 'first(.[] | select(.name != $DB_CATALOG and .useFreeLimit == true) | .name)' /tmp/az_stdout.$$)"
     fi
     if [[ -n $x1 ]]; then DB_CATALOG="$x1"; fi
+    fi
 fi
 
 # secrets was empty or invalid.
-if [[ -z "${DBA_USERNAME}" || -z "${DB_CATALOG}" || -z "$DB_HOST" || "$DB_HOST" != *"-${AZ_DB_SUFFIX}" ]]; then 
-    DB_HOST="${DB_BASENAME}-${AZ_DB_SUFFIX}"; 
+if [[ -z "${DBA_USERNAME}" || -z "${DB_CATALOG}" || -z "$DB_HOST" || "$DB_HOST" != *"-${AZ_DB_SUFFIX}" ]]; then
+    DB_HOST="${DB_BASENAME}-${AZ_DB_SUFFIX}"
+    DB_HOST_FQDN=""
     DB_CATALOG="$CATALOG_BASENAME"
-fi  
+fi
 
 if [[ -n "$DB_HOST_FQDN" && -n "$DB_HOST" ]]; then
     echo "az sql server/catalog: $DB_HOST $DBA_USERNAME@$DB_HOST_FQDN:$DB_PORT/$DB_CATALOG"
@@ -173,18 +190,21 @@ echo -e "\nCreate sql server if not exists"
 echo -e   "-------------------------------\n"
 
 export DB_HOST_CREATED=""
-if ! AZ sql server show -n "${DB_HOST}" -g "${RG_NAME}"; then
+cmd_mask_azure_secrets
+CMD_EXIT_ON_ERROR=
+if ! CMD az sql server show -n "${DB_HOST}" -g "${RG_NAME}"; then
     # sql server create does not support tags
-    if ! AZ sql server create -n "${DB_HOST}" -g "${RG_NAME}" \
+    cmd_mask_azure_secrets
+    CMD_EXIT_ON_ERROR=
+    if ! CMD az sql server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --admin-user "${DBA_USERNAME}" \
         --admin-password "${DBA_PASSWORD}"; then
-        cat /tmp/az_stderr.$$
         return 1
     fi
     DB_HOST_CREATED="1"
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
         # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && cmd_mask_azure_secrets && CMD az sql server delete -y -n "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
         echo -e "\nDeleting sqlserver ${DB_HOST} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi
 else
@@ -196,7 +216,9 @@ else
 fi
 
 read_fqdn_dba_if_host
-DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure --defaults sql-server="${DB_HOST}"
+CMD_EXIT_ON_ERROR=PRINT_EXIT
+cmd_mask_azure_secrets
+CMD az configure --defaults sql-server="${DB_HOST}"
 
 echo "AZ sql ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/servers/${DB_HOST}/overview"
 echo ""
@@ -207,30 +229,36 @@ echo ""
 echo -e "\nCreate catalog if not exists" 
 echo -e   "----------------------------\n"
 
-if ! AZ sql db show -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
+cmd_mask_azure_secrets
+CMD_EXIT_ON_ERROR=
+if ! CMD az sql db show -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"; then
 
-    if ! AZ sql db create -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
+    cmd_mask_azure_secrets
+    CMD_EXIT_ON_ERROR=
+    if ! CMD az sql db create -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
         --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
         --compute-model Serverless --backup-storage-redundancy Local \
         --zone-redundant false --exhaustion-behavior AutoPause --use-free-limit \
          ; then 
 
         # delete any leftover
-        cat /tmp/az_stderr.$$
-        AZ sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"
+        cmd_mask_azure_secrets
+        CMD_EXIT_ON_ERROR=
+        CMD az sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}"
 
-        if ! AZ sql db create -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
+        cmd_mask_azure_secrets
+        CMD_EXIT_ON_ERROR=
+        if ! CMD az sql db create -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" -e GeneralPurpose -f Gen5 -c 1 \
             --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
             --compute-model Serverless --backup-storage-redundancy Local \
             --zone-redundant false --exhaustion-behavior AutoPause --auto-pause-delay 15 \
              ; then
-            cat /tmp/az_stderr.$$
             return 1
         fi
     fi 
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
         # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && cmd_mask_azure_secrets && CMD az sql db delete -y -n "${DB_CATALOG}" -s "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
         echo -e "\nDeleting catalog ${DB_CATALOG} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi
 fi
@@ -245,12 +273,16 @@ echo ""
 echo -e "Creating permissive firewall rules if not exists"
 echo -e   "----------------------------------------------\n"
 
-# convert CIDR to range 
-
-DB_EXIT_ON_ERROR="PRINT_EXIT" AZ sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"
-if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
-    firewall_rule_add "${DB_FIREWALL_CIDRS[@]}"
-fi
+# Sync embedded Azure SQL firewall: one rule per CIDR in DB_FIREWALL_CIDRS
+CMD_EXIT_ON_ERROR=PRINT_EXIT
+cmd_mask_azure_secrets
+CMD az sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"
+python3 "${_LFC_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/utils/azure-sql-firewall-rule.py" \
+    --server "${DB_HOST}" \
+    -g "${RG_NAME}" \
+    --existing-rules "/tmp/az_stdout.$$" \
+    --my-ip \
+    --apply
 
 echo "AZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.Sql/servers/${DB_HOST}/networking"
 echo ""
@@ -272,7 +304,6 @@ if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT
 
     DB_PASSWORD_CHANGED="1"
     if ! test_db_connect "$DBA_USERNAME" "${DBA_PASSWORD}" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
-        cat /tmp/az_stderr.$$
         return 1
     fi
 fi
@@ -291,4 +322,6 @@ fi
 echo -e "\nBilling ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"
 echo ""
 
-az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
+CMD_EXIT_ON_ERROR=
+cmd_mask_azure_secrets
+CMD az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table

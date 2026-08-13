@@ -25,6 +25,11 @@ if (( ${BASH_VERSINFO[0]} < 4 )); then
     kill -INT $$
 fi
 
+_LFC_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export _LFC_REPO_ROOT
+# shellcheck source=bash_utils/cmd-wrapper-helpers.sh
+source "${_LFC_REPO_ROOT}/bash_utils/cmd-wrapper-helpers.sh"
+
 # config 
 declare -A CONFIG 
 export CONFIG
@@ -176,27 +181,30 @@ CONT_OR_EXIT() {
 }
 export -f CONT_OR_EXIT
 
-# display AZ commands
+# Map legacy DB_* prefix vars to CMD_* (for scripts not yet migrated to CMD directly).
+cmd_sync_db_vars() {
+    CMD_EXIT_ON_ERROR="${DB_EXIT_ON_ERROR:-${CMD_EXIT_ON_ERROR:-}}"
+    CMD_OUT_SUFFIX="${DB_OUT_SUFFIX:-${CMD_OUT_SUFFIX:-}}"
+    CMD_STDOUT="${DB_STDOUT:-${CMD_STDOUT:-}}"
+    CMD_STDERR="${DB_STDERR:-${CMD_STDERR:-}}"
+}
+
+# Azure secret masking for CMD_MASK_SECRETS (set as standalone statement before CMD).
+cmd_mask_azure_secrets() {
+    CMD_MASK_SECRETS=()
+    [[ -n "${DBA_PASSWORD:-}" ]] && CMD_MASK_SECRETS+=("$DBA_PASSWORD")
+    [[ -n "${USER_PASSWORD:-}" ]] && CMD_MASK_SECRETS+=("$USER_PASSWORD")
+    [[ -n "${az_tenantDefaultDomain:-}" ]] && CMD_MASK_SECRETS+=("$az_tenantDefaultDomain")
+    [[ -n "${az_id:-}" ]] && CMD_MASK_SECRETS+=("$az_id")
+    [[ -n "${az_user_name:-}" ]] && CMD_MASK_SECRETS+=("$az_user_name")
+}
+export -f cmd_sync_db_vars cmd_mask_azure_secrets
+
+# display AZ commands (thin wrapper over CMD for scripts not yet migrated)
 AZ() {
-    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
-    # stdout and stderr file names
-    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
-    local DB_STDOUT=${DB_STDOUT:-"/tmp/az_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-    local DB_STDERR=${DB_STDERR:-"/tmp/az_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-    local RC
-
-    PWMASK="$@"
-    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
-    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
-    PWMASK="${PWMASK//$az_tenantDefaultDomain/\$az_tenantDefaultDomain}"
-    PWMASK="${PWMASK//$az_id/\$az_id}"
-    PWMASK="${PWMASK//$az_user_name/\$az_user_name}"
-    echo -n az "${PWMASK}"
-    az "$@" >${DB_STDOUT} 2>${DB_STDERR}
-
-    RC=$?
-    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
-    return $?
+    cmd_sync_db_vars
+    cmd_mask_azure_secrets
+    CMD az "$@"
 }
 export -f AZ
 
@@ -240,26 +248,36 @@ AZ_INIT() {
     echo -e "az init"
     echo -e "-------\n"
 
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ account show
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az account show
     export az_id="${az_id:-$(jq -r '.id' /tmp/az_stdout.$$)}" 
     export az_tenantDefaultDomain="${az_tenantDefaultDomain:-$(jq -r '.tenantDefaultDomain' /tmp/az_stdout.$$)}"
     export az_user_name="${az_user_name:-$(jq -r '.user.name' /tmp/az_stdout.$$)}"
 
     # set default location
     if [[ -n "${CLOUD_LOCATION}" ]]; then 
-        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure ${CLOUD_LOCATION:+--defaults location="${CLOUD_LOCATION}"}
+        CMD_EXIT_ON_ERROR=PRINT_EXIT
+        cmd_mask_azure_secrets
+        CMD az configure ${CLOUD_LOCATION:+--defaults location="${CLOUD_LOCATION}"}
     fi
 
     # create resource group
-    if ! AZ group show --resource-group "${RG_NAME}" ; then
+    cmd_mask_azure_secrets
+    CMD_EXIT_ON_ERROR=
+    if ! CMD az group show --resource-group "${RG_NAME}"; then
         # multiples tags are defined correctly below.  NOT A MISTAKE
-        DB_EXIT_ON_ERROR="PRINT_EXIT" AZ group create --resource-group "${RG_NAME}" \
+        CMD_EXIT_ON_ERROR=PRINT_EXIT
+        cmd_mask_azure_secrets
+        CMD az group create --resource-group "${RG_NAME}" \
             --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}"
     fi
 
     # set default resource group
     RG_NAME=$(jq -r .name /tmp/az_stdout.$$)
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ configure --defaults group="${RG_NAME}"    
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az configure --defaults group="${RG_NAME}"    
 
     # show billing for the resource group
     echo -e "\nBilling for ${RG_NAME}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/costanalysis"

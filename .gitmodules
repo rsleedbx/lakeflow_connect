@@ -1,3 +1,6 @@
 [submodule ".cursor"]
 	path = .cursor
 	url = https://github.com/rsleedbx/skills
+[submodule "bash_utils"]
+	path = bash_utils
+	url = https://github.com/rsleedbx/bash_utils

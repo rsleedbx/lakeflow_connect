@@ -615,6 +615,7 @@ test_db_connect() {
 }
 
 TEST_DB_CONNECT() {
+    # Callers must prefix DB_USERNAME, DB_PASSWORD, and DB_CATALOG (and rely on DB_HOST_FQDN/DB_PORT).
     local RC
     echo "select 1" | SQLCLI >/dev/null 2>&1
     RC=$?

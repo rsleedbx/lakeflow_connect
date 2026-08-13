@@ -9,8 +9,7 @@ deploy/tf/tfplan
 deploy/tf/.provider-cache/
 deploy/tf/.provider-build/
 deploy/tf/*.bak
-sqlserver/ddl_support_objects.sql
-sqlserver/utility_script.sql
+sqlserver/utility-script-*.sql
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

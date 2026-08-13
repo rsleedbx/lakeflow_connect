@@ -37,9 +37,9 @@ SQLCLI() {
 }
 export -f SQLCLI
 
-# Helper to run SQL as DBA user
+# Helper to run SQL as DBA user (clear catalog → SQLCMD defaults to master)
 SQLCLI_DBA() {
-    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" SQLCLI "${@}"
+    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="" SQLCLI "${@}"
 }
 export -f SQLCLI_DBA
 

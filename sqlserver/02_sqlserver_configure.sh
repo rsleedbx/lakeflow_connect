@@ -51,16 +51,13 @@ export -f db_replication_cleanup
 
 # #############################################################################
 
-# connect to master catalog
-if ! test_db_connect "$DBA_USERNAME" "$DBA_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
-    cat /tmp/select1_stdout.$$ /tmp/select1_stderr.$$
-    return 1
-fi    
+# connect to master catalog (SSOT: TEST_DB_CONNECT + SQLCLI)
+DB_EXIT_ON_ERROR=PRINT_EXIT DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG=master TEST_DB_CONNECT
 
 # #############################################################################
-# create user login
+# create user login (must run against master)
 
-cat <<EOF | DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" SQLCLI_DBA
+DB_EXIT_ON_ERROR=PRINT_EXIT DB_CATALOG=master SQLCLI_DBA <<EOF
 CREATE LOGIN ${USER_USERNAME} WITH PASSWORD = '${USER_PASSWORD}'
 go
 alter login ${USER_USERNAME} with password = '${USER_PASSWORD}'
@@ -70,15 +67,12 @@ go
 EOF
 
 # connect to master as a user
-if ! test_db_connect "$USER_USERNAME" "$USER_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "master"; then
-    cat /tmp/select1_stdout.$$ /tmp/select1_stderr.$$
-    return 1
-fi   
+DB_EXIT_ON_ERROR=PRINT_EXIT DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PASSWORD" DB_CATALOG=master TEST_DB_CONNECT
 
 # #############################################################################
 # create user in the catalog
 
-cat <<EOF | DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+DB_EXIT_ON_ERROR=PRINT_EXIT DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
 CREATE USER ${USER_USERNAME} FOR LOGIN ${USER_USERNAME} WITH DEFAULT_SCHEMA=dbo
 go
 ALTER ROLE db_owner ADD MEMBER ${USER_USERNAME}
@@ -88,10 +82,7 @@ go
 EOF
 
 # connect to $DB_CATALOG as a user
-if ! test_db_connect "$USER_USERNAME" "$USER_PASSWORD" "$DB_HOST_FQDN" "$DB_PORT" "$DB_CATALOG"; then
-    cat /tmp/select1_stdout.$$ /tmp/select1_stderr.$$
-    return 1
-fi   
+DB_EXIT_ON_ERROR=PRINT_EXIT DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PASSWORD" DB_CATALOG="$DB_CATALOG" TEST_DB_CONNECT
 
 # #############################################################################
 
@@ -102,7 +93,7 @@ set_ct_on_catalog() {
 case "${CDC_CT_MODE}" in 
 "BOTH"|"CT") 
 
-cat <<EOF | DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+DB_EXIT_ON_ERROR=PRINT_EXIT DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
 if exists (select * from sys.change_tracking_databases where database_id=db_id())
     BEGIN
         select 'CT already enabled'
@@ -115,7 +106,7 @@ else
 go
 EOF
 
-echo -e "SET NOCOUNT ON\ngo\n select * from sys.change_tracking_databases where database_id=db_id()" | DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCMD
+echo -e "SET NOCOUNT ON\ngo\n select * from sys.change_tracking_databases where database_id=db_id()" | DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCLI
 if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "ct db enable ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
     return 1
@@ -124,7 +115,7 @@ fi
 ;;
 *)
 
-cat <<EOF | DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
 -- ok to fail if table does not exist 
 ALTER TABLE [${DB_SCHEMA}].[intpk] disable CHANGE_TRACKING
 go
@@ -142,7 +133,7 @@ else
 go
 EOF
 
-echo -e "SET NOCOUNT ON\ngo\n select * from sys.change_tracking_databases where database_id=db_id()" | DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCMD
+echo -e "SET NOCOUNT ON\ngo\n select * from sys.change_tracking_databases where database_id=db_id()" | DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCLI
 if [[ ! -s /tmp/sqlcmd_stdout.$$ ]]; then echo "ct db disable ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else
     echo "ct db disable not ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"
@@ -161,7 +152,7 @@ set_cdc_on_catalog() {
 case "${CDC_CT_MODE}" in 
 "BOTH"|"CDC") 
 # NOCOUNT is required to fix Invalid cursor state, SQL state 24000 in SQLExecDirect
-cat <<EOF | DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+DB_EXIT_ON_ERROR=PRINT_EXIT DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
 SET NOCOUNT ON
 go
 if exists (select name, is_cdc_enabled from sys.databases where name=db_name() and is_cdc_enabled=1)
@@ -187,7 +178,7 @@ if not exists (select name, is_cdc_enabled from sys.databases where name=db_name
 go
 EOF
 
-echo -e "SET NOCOUNT ON\ngo\n select name, is_cdc_enabled from sys.databases where name=db_name() and is_cdc_enabled=1" | DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCMD
+echo -e "SET NOCOUNT ON\ngo\n select name, is_cdc_enabled from sys.databases where name=db_name() and is_cdc_enabled=1" | DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCLI
 if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "cdc db enabled ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
     return 1
@@ -196,7 +187,7 @@ fi
 ;;
 *)
 
-cat <<EOF | DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
 -- ok to fail if table does not exist 
 EXEC sys.sp_cdc_disable_table @source_schema = N'${DB_SCHEMA}', @source_name = N'dtix', @capture_instance = N'all'
 go
@@ -224,7 +215,7 @@ if not exists (select name, is_cdc_enabled from sys.databases where name=db_name
 go
 EOF
 
-echo -e "SET NOCOUNT ON\ngo\n select name, is_cdc_enabled from sys.databases where name=db_name() and is_cdc_enabled=0" | DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCMD
+echo -e "SET NOCOUNT ON\ngo\n select name, is_cdc_enabled from sys.databases where name=db_name() and is_cdc_enabled=0" | DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCLI
 if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "cdc db disabled ok $DB_CATALOG catalog $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else 
     echo -e "\n\nERROR: CDC COULD NOT BE ENABLED. CHANGING TO CT ONLY MODE\n\n"
@@ -246,71 +237,74 @@ set_repl_on_catalog
 
 # enable schema evolution
 
+_SQLSERVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" && pwd)"
+export _SQLSERVER_DIR
+_LFC_REPO_ROOT="${_LFC_REPO_ROOT:-$(cd "${_SQLSERVER_DIR}/.." && pwd)}"
+export _LFC_REPO_ROOT
+
 echo "enabling schema evolution"
 
 set_sch_evo() {
-
-    ddl_script_url="https://docs.databricks.com/aws/en/assets/files/ddl_support_objects-06ebad393ea6bc7d853d5504dc6542de.sql"
-
-
+    local ddl_script
     case "${CDC_CT_MODE}" in
     "BOTH"|"CDC")
-        ddl_script=./ddl_support_objects.sql
+        ddl_script="${_SQLSERVER_DIR}/ddl_support_objects.sql"
         ;;
     "CT")
-        ddl_script=./ddl_support_objects_ct_only.sql
+        ddl_script="${_SQLSERVER_DIR}/deprecated_ddl_support_objects_ct_only.sql"
         ;;
     *)
-        echo "CDC_CT_MODE=${CDC_CT_MODE} must be BOTH or CT"
+        echo "CDC_CT_MODE=${CDC_CT_MODE} must be BOTH, CDC, or CT" >&2
         return 1
         ;;
     esac
 
-    if [[ -f "$ddl_script" ]]; then
-        echo "using $ddl_script with $CDC_CT_MODE"
-        cat "$ddl_script" | \
-        sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
-        DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
-    else
-        echo "downloading $ddl_script"
-        wget -qO- $ddl_script_url | \
-        sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" | \
-        DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+    if [[ ! -s "$ddl_script" ]]; then
+        echo "ERROR: missing or empty $ddl_script" >&2
+        return 1
     fi
+
+    echo "using $ddl_script with $CDC_CT_MODE"
+    sed -e "s/SET \@replicationUser = '';/SET \@replicationUser = '${USER_USERNAME}';/" \
+        -e "s/\@mode = '.*';/\@mode = '$CDC_CT_MODE';/" "$ddl_script" | \
+    DB_EXIT_ON_ERROR=PRINT_EXIT DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" \
+        DB_CATALOG="${DB_CATALOG}" SQLCLI
 }
 export -f set_sch_evo
-set_sch_evo
+if ! set_sch_evo; then
+    echo "ERROR: set_sch_evo failed" >&2
+    return 1
+fi
 
-utility_script_url="https://docs.databricks.com/aws/en/assets/files/utility_script-a4544ba646de3f6f3fd03eb3dcba563e.sql"
-utility_script_path="$(dirname "${BASH_SOURCE[0]:-.}")/utility_script.sql"
-run_utility_script() {
-    if [[ -f "$utility_script_path" ]]; then
-        echo "using $utility_script_path"
-        cat "$utility_script_path" | DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
-    else
-        echo "downloading utility script"
-        wget -qO- "$utility_script_url" | DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
-    fi
-}
-export -f run_utility_script
+# Install Lakeflow utility objects (versioned; setup procs run after tables exist)
+echo "installing utility_script (latest registered)"
+DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" \
+  python3 "${_LFC_REPO_ROOT}/utils/sqlserver-utility-script.py" \
+    --user "${USER_USERNAME}" \
+    --install-only \
+    --apply || return 1
 
 # #############################################################################
 
 # create schema
 
-SQLCMD -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" -C -l 10 -Q "create schema [${DB_SCHEMA}]"
+DB_EXIT_ON_ERROR=PRINT_EXIT DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
+create schema [${DB_SCHEMA}]
+go
+EOF
 # /tmp/sqlcmd_stdout.$$ will be 0 if schema was created.  drop the schema when done
 if [[ ! -s /tmp/sqlcmd_stdout.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_DB_AFTER_SLEEP}" && SQLCMD -d ${DB_CATALOG} -S ${DB_HOST_FQDN},${DB_PORT} -U "${USER_USERNAME}" -P "${USER_PASSWORD}" \
-    -Q "drop table [${DB_SCHEMA}].[intpk]; drop table [${DB_SCHEMA}].[dtix]; drop schema [${DB_SCHEMA}];" >> ~/nohup.out 2>&1 &
-    echo -e "\nDeleting ${DB_SCHEMA} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n" 
+    nohup sleep "${DELETE_DB_AFTER_SLEEP}" && \
+      echo -e "drop table [${DB_SCHEMA}].[intpk];\ngo\ndrop table [${DB_SCHEMA}].[dtix];\ngo\ndrop schema [${DB_SCHEMA}];\ngo" | \
+      DB_CATALOG="${DB_CATALOG}" SQLCLI_USER >> ~/nohup.out 2>&1 &
+    echo -e "\nDeleting ${DB_SCHEMA} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n"
 fi
 
 # #############################################################################
 
 # create tables
 
-cat <<EOF | DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
 create table [${DB_SCHEMA}].[intpk] (pk int IDENTITY NOT NULL primary key, dt datetime)
 go
 create table [${DB_SCHEMA}].[dtix] (dt datetime)
@@ -318,7 +312,7 @@ go
 EOF
 
 if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
-cat <<EOF | DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
 IF OBJECT_ID(N'${DB_SCHEMA}.intpk', N'U') IS NOT NULL
     insert into [${DB_SCHEMA}].[intpk] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
 go
@@ -327,13 +321,13 @@ IF OBJECT_ID(N'${DB_SCHEMA}.dtix', N'U') IS NOT NULL
 go
 EOF
 
-echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA}].[intpk]" | DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA}].[intpk]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
 if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table intpk ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
     return 1
 fi
 
-echo -e "SET NOCOUNT ON\ngo\n select top 1 dt from [${DB_SCHEMA}].[dtix]" | DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+echo -e "SET NOCOUNT ON\ngo\n select top 1 dt from [${DB_SCHEMA}].[dtix]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
 if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
     return 1
@@ -342,16 +336,28 @@ fi
 
 # #############################################################################
 
+# Run Lakeflow utility setup procs for this schema (after tables exist)
+echo "running utility_script setup for SCHEMAS:${DB_SCHEMA} mode=${CDC_CT_MODE}"
+DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" \
+  python3 "${_LFC_REPO_ROOT}/utils/sqlserver-utility-script.py" \
+    --user "${USER_USERNAME}" \
+    --tables "SCHEMAS:${DB_SCHEMA}" \
+    --capture-mode "${CDC_CT_MODE}" \
+    --setup-only \
+    --apply || return 1
+
+# #############################################################################
+
 # enable CT on  tables
 
 set_repl_on_table() {
 if [[ "${CDC_CT_MODE}" =~ ^(BOTH|CT)$  ]]; then 
-cat <<EOF | DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
     ALTER TABLE [${DB_SCHEMA}].[intpk] ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON) 
 go
 EOF
 
-echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, schema_name(t.schema_id) TABLE_SCHEM, t.name TABLE_NAME  from sys.change_tracking_tables ctt left join sys.tables t on ctt.object_id = t.object_id where t.schema_id=schema_id('${DB_SCHEMA}')" | DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, schema_name(t.schema_id) TABLE_SCHEM, t.name TABLE_NAME  from sys.change_tracking_tables ctt left join sys.tables t on ctt.object_id = t.object_id where t.schema_id=schema_id('${DB_SCHEMA}')" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
 if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "ct table enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
     return 1
@@ -359,7 +365,7 @@ fi
 
 else
 
-echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, schema_name(t.schema_id) TABLE_SCHEM, t.name TABLE_NAME  from sys.change_tracking_tables ctt left join sys.tables t on ctt.object_id = t.object_id where t.schema_id=schema_id('${DB_SCHEMA}')" | DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, schema_name(t.schema_id) TABLE_SCHEM, t.name TABLE_NAME  from sys.change_tracking_tables ctt left join sys.tables t on ctt.object_id = t.object_id where t.schema_id=schema_id('${DB_SCHEMA}')" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
 if [[ ! -s /tmp/select_stdout.$$ ]]; then echo "ct table disabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
     return 1
@@ -371,12 +377,12 @@ fi
 
 if [[ "${CDC_CT_MODE}" =~ ^(BOTH|CDC)$  ]]; then 
 
-cat <<EOF | DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
 EXEC sys.sp_cdc_enable_table @source_schema = N'${DB_SCHEMA}', @source_name = N'dtix', @role_name = NULL, @supports_net_changes = 0
 go
 EOF
 
-echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, s.name TABLE_SCHEM, t.name as TABLE_NAME from sys.tables t left join sys.schemas s on t.schema_id = s.schema_id where t.is_tracked_by_cdc=1 and t.schema_id=schema_id('${DB_SCHEMA}')" | DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, s.name TABLE_SCHEM, t.name as TABLE_NAME from sys.tables t left join sys.schemas s on t.schema_id = s.schema_id where t.is_tracked_by_cdc=1 and t.schema_id=schema_id('${DB_SCHEMA}')" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
 if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "cdc table enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
     return 1
@@ -384,7 +390,7 @@ fi
 
 else
 
-echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, s.name TABLE_SCHEM, t.name as TABLE_NAME from sys.tables t left join sys.schemas s on t.schema_id = s.schema_id where t.is_tracked_by_cdc=1 and t.schema_id=schema_id('${DB_SCHEMA}')" | DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" DB_CATALOG="${DB_CATALOG}" SQLCMD
+echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, s.name TABLE_SCHEM, t.name as TABLE_NAME from sys.tables t left join sys.schemas s on t.schema_id = s.schema_id where t.is_tracked_by_cdc=1 and t.schema_id=schema_id('${DB_SCHEMA}')" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
 if [[ ! -s /tmp/select_stdout.$$ ]]; then echo "cdc table disabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
 else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
     return 1

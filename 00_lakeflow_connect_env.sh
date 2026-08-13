@@ -888,7 +888,7 @@ connection_spec_from_json() {
     port: (.port | tostring),
     user: .user,
     password: .password
-  } + if ((.connection_type // .db_type // "SQLSERVER") | ascii_upcase) == "SQLSERVER" then {trustServerCertificate: "true"} else {} end)
+  } + if ((.connection_type // .db_type // "SQLSERVER") | ascii_upcase) | IN("SQLSERVER"; "MYSQL") then {trustServerCertificate: "true"} else {} end)
 }'
     )
 
@@ -908,7 +908,7 @@ options:
     port: $DB_PORT
     user: $USER_USERNAME
     password: $USER_PASSWORD
-    $(if [[ "${CONNECTION_TYPE^^}" == "SQLSERVER" ]]; then printf "trustServerCertificate: true"; fi)
+    $(if [[ "${CONNECTION_TYPE^^}" == "SQLSERVER" || "${CONNECTION_TYPE^^}" == "MYSQL" ]]; then printf "trustServerCertificate: true"; fi)
 EOF
 )
 OUTPUT[conn_patch_json]=$(echo "${OUTPUT[conn_create_json]}" | jq 'del(.connection_type)')

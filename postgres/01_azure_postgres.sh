@@ -27,6 +27,9 @@ fi
 
 AZ_INIT
 
+_LFC_REPO_ROOT="${_LFC_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+export _LFC_REPO_ROOT
+
 # #############################################################################
 # export functions
 
@@ -46,32 +49,35 @@ SQLCLI_USER() {
 export -f SQLCLI_USER
 
 password_reset_db() {
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server update -y -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az postgres flexible-server update -y -n "${DB_HOST}" --admin-password "${DBA_PASSWORD}" -g "${RG_NAME}"
 }
 export -f password_reset_db
 
-
 delete_db() {
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}"
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az postgres flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}"
 }
 export -f delete_db
 
 firewall_rule_add() {
-for fw_rule in ${*}; do
-    read -rd "\n" address host_min host_max <<< \
-        "$(ipcalc -bn "${fw_rule}" | awk -F'[:[:space:]]+' '/^HostMin|^HostMax|^Address/ {print $(NF-1)}')"
-    fw_rule_name="$(echo "${fw_rule}" | tr [./] _)"
-    if [[ -z $host_min || -z $host_max ]]; then
-        #echo "${fw_rule} did not produce correct ${host_min} and/or ${host_max}.  Assuming /32"
-        host_min="$address"
-        host_max="$address"
-    fi
-    AZ postgres flexible-server firewall-rule create --name "${fw_rule_name}" --server-name "$DB_HOST" -g "${RG_NAME}" --start-ip-address "${host_min}" --end-ip-address "${host_max}"
-    #if ! AZ  postgres flexible-server firewall-rule show --name "${fw_rule_name}" --server-name "${DB_HOST}" -g "${RG_NAME}"; then
-    #  DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server firewall-rule create --name "${fw_rule_name}" --server-name "$DB_HOST" -g "${RG_NAME}" --start-ip-address "${host_min}" --end-ip-address "${host_max}"
-    #fi
-done
+    # Thin wrapper: list current rules, then sync via utils/azure-sql-firewall-rule.py
+    # Optional args are ignored; desired CIDRs come from DB_FIREWALL_CIDRS.
+    local _lfc_root="${_LFC_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az postgres flexible-server firewall-rule list --server-name "${DB_HOST}" -g "${RG_NAME}"
+    python3 "${_lfc_root}/utils/azure-sql-firewall-rule.py" \
+        --kind postgres \
+        --server "${DB_HOST}" \
+        -g "${RG_NAME}" \
+        --existing-rules "/tmp/az_stdout.$$" \
+        --my-ip \
+        --apply
 }
+export -f firewall_rule_add
 
 # make sure to quote echo "$sql_dml_generator" otherwise the newline will be removed 
 export sql_dml_generator='
@@ -136,12 +142,16 @@ if [[ -n "$DB_HOST" && "$DB_HOST" != *"-${DB_SUFFIX}" ]]; then
 fi
 
 # get avail server if not specified
-if  [[ -z "$DB_HOST" ||  "$DB_HOST_FQDN" != "$DB_HOST."* ]] && \
-    AZ postgres flexible-server list -g "${RG_NAME}"; then
-    
-    read -rd "\n" x1 x2 x3 <<< "$(jq -r 'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.DBforPostgreSQL/flexibleServers")) | .name, .fullyQualifiedDomainName, .administratorLogin' /tmp/az_stdout.$$)"
-    if [[ -n $x1 && -n $x2 && -n $x3 && "$x1" == *"-${DB_SUFFIX}" ]]; then 
-        DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; 
+if [[ -z "$DB_HOST" || "$DB_HOST_FQDN" != "$DB_HOST."* ]]; then
+    cmd_mask_azure_secrets
+    CMD_EXIT_ON_ERROR=
+    if CMD az postgres flexible-server list -g "${RG_NAME}"; then
+        read -rd "\n" x1 x2 x3 <<< "$(jq -r --arg suffix "-${DB_SUFFIX}" \
+          'first(.[] | select(.fullyQualifiedDomainName!=null and .type=="Microsoft.DBforPostgreSQL/flexibleServers" and (.name | endswith($suffix)))) | .name, .fullyQualifiedDomainName, .administratorLogin' \
+          /tmp/az_stdout.$$)"
+        if [[ -n $x1 && -n $x2 && -n $x3 ]]; then 
+            DB_HOST="$x1"; DB_HOST_FQDN="$x2"; DBA_USERNAME="$x3"; 
+        fi
     fi
 fi
 
@@ -173,14 +183,19 @@ echo -e   "------------------------------------\n"
 
 
 export DB_HOST_CREATED=""
-if ! AZ postgres flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
+cmd_mask_azure_secrets
+CMD_EXIT_ON_ERROR=
+if ! CMD az postgres flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
 
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ provider register --wait --namespace Microsoft.DBforPostgreSQL
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az provider register --wait --namespace Microsoft.DBforPostgreSQL
 
-    # sql server create does not support tags
     # default catalog created
     # default Standard_B2s is the lowest allowed
-    DB_EXIT_ON_ERROR="PRINT_EXIT" AZ postgres flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    if ! CMD az postgres flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
         --database "${DB_CATALOG}" \
         --version 17 \
@@ -190,12 +205,14 @@ if ! AZ postgres flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
         --tier Burstable \
         --sku-name Standard_B2s \
         --admin-user "${DBA_USERNAME}" \
-        --admin-password "${DBA_PASSWORD}"
+        --admin-password "${DBA_PASSWORD}"; then
+        return 1
+    fi
 
     DB_HOST_CREATED="1"
     if [[ -n "$DELETE_DB_AFTER_SLEEP" ]]; then
         # </dev/null solves Fatal Python error: init_sys_streams: can't initialize sys standard streams
-        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && AZ postgres flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
+        nohup sleep "${DELETE_DB_AFTER_SLEEP}" && cmd_mask_azure_secrets && CMD az postgres flexible-server delete -y -n "${DB_HOST}" -g "${RG_NAME}" </dev/null >> ~/nohup.out 2>&1 &
         echo -e "\nDeleting ${DB_HOST} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi
 
@@ -220,14 +237,18 @@ echo ""
 echo -e "Creating permissive firewall rules if not exists"
 echo -e "------------------------------------------------\n"
 
-# convert CIDR to range 
+CMD_EXIT_ON_ERROR=PRINT_EXIT
+cmd_mask_azure_secrets
+CMD az postgres flexible-server firewall-rule list --server-name "${DB_HOST}" -g "${RG_NAME}"
+python3 "${_LFC_REPO_ROOT}/utils/azure-sql-firewall-rule.py" \
+    --kind postgres \
+    --server "${DB_HOST}" \
+    -g "${RG_NAME}" \
+    --existing-rules "/tmp/az_stdout.$$" \
+    --my-ip \
+    --apply
 
-DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server firewall-rule list --server-name "${DB_HOST}" -g "${RG_NAME}"
-if [[ "0" == "$(jq length /tmp/az_stdout.$$)" ]]; then
-    firewall_rule_add "${DB_FIREWALL_CIDRS[*]}"
-fi
-
-echo -e "\nAZ sql server firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${DB_HOST}/networking \n"
+echo -e "\nAZ postgres firewall-rule ${DB_HOST}: https://portal.azure.com/#@${az_tenantDefaultDomain}/resource/subscriptions/${az_id}/resourceGroups/${RG_NAME}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${DB_HOST}/networking \n"
 
 # #############################################################################
 # Check password
@@ -278,24 +299,32 @@ echo -e "\nEnable wal_level=logical and require_secure_transport=off"
 echo -e   "---------------------------------------------------------\n"
 
 PARAMETER_SET=""
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_STDOUT=/tmp/az_parm_list.$$ AZ postgres flexible-server parameter list --server-name "$DB_HOST"
+CMD_EXIT_ON_ERROR=PRINT_EXIT
+cmd_mask_azure_secrets
+CMD_STDOUT=/tmp/az_parm_list.$$ CMD az postgres flexible-server parameter list --server-name "$DB_HOST"
 
 # cdc requires logical 
 if [[ "logical" != "$(jq -r '.[] | select(.name == "wal_level") | .value | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server parameter set --server-name "$DB_HOST" --name  wal_level --value logical
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az postgres flexible-server parameter set --server-name "$DB_HOST" --name  wal_level --value logical
     PARAMETER_SET="1"
 fi
 
 # lakeflow connect expects ssl disabled for now
 if [[ "off" != "$(jq -r '.[] | select(.name == "require_secure_transport") | .value | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server parameter set --server-name "$DB_HOST" --name  require_secure_transport --value off
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az postgres flexible-server parameter set --server-name "$DB_HOST" --name  require_secure_transport --value off
     PARAMETER_SET="1"
 fi
 
 
 # restart to take effect
 if [[ "$PARAMETER_SET" == "1" ]]; then 
-    DB_EXIT_ON_ERROR="PRINT_EXIT"  AZ postgres flexible-server restart --name "$DB_HOST"
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD az postgres flexible-server restart --name "$DB_HOST"
 fi
 
 # #############################################################################
@@ -311,4 +340,6 @@ fi
 echo -e "\nResource list"
 echo -e   "-------------\n"
 
-AZ resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
+CMD_EXIT_ON_ERROR=
+cmd_mask_azure_secrets
+CMD az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table

@@ -10,6 +10,8 @@ deploy/tf/.provider-cache/
 deploy/tf/.provider-build/
 deploy/tf/*.bak
 sqlserver/utility-script-*.sql
+postgres/lakeflow_pg_ddl_change_tracking-*.sql
+mysql/lakeflow_mysql_utility_script-*.sql
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -36,8 +36,20 @@ export STOP_AFTER_SLEEP="${STOP_AFTER_SLEEP:-20m}"
 NINE_CHAR_ID=$(date +%s | xargs printf "%08x\n")
 export NINE_CHAR_ID
 
-DB_EXIT_ON_ERROR="PRINT_EXIT" DBX auth env
-DATABRICKS_HOST_NAME=$(jq -r .env.DATABRICKS_HOST /tmp/dbx_stdout.$$)
+# databricks URL (auth env is deprecated — use describe; login only if needed)
+if ! DB_EXIT_ON_ERROR="" DBX auth describe; then
+  echo "Databricks auth for profile '${DATABRICKS_CONFIG_PROFILE}' is not usable; running auth login..."
+  # Interactive OAuth — call CLI directly (do not use DBX; it forces --output json)
+  databricks auth login --profile "${DATABRICKS_CONFIG_PROFILE}" || { echo "ERROR: auth login failed" >&2; kill -INT $$; }
+  DB_EXIT_ON_ERROR="PRINT_EXIT" DBX auth describe
+fi
+DATABRICKS_HOST_NAME="$(jq -r '.details.host // empty' /tmp/dbx_stdout.$$)"
+DATABRICKS_HOST_NAME="${DATABRICKS_HOST_NAME%/}"
+if [[ -z "$DATABRICKS_HOST_NAME" || "$DATABRICKS_HOST_NAME" == "null" ]]; then
+  echo "ERROR: could not resolve Databricks host from auth describe" >&2
+  kill -INT $$
+fi
+export DATABRICKS_HOST_NAME
 
 if [[ -z "${CONNECTION_NAME:-}" ]]; then
   CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr ' .@' '_')
@@ -47,11 +59,18 @@ export CONNECTION_NAME
 export GATEWAY_PIPELINE_NAME="${WHOAMI}_${NINE_CHAR_ID}_GW"
 export INGESTION_PIPELINE_NAME="${WHOAMI}_${NINE_CHAR_ID}_IG"
 export CLEANUP_JOB_NAME="${WHOAMI}_${NINE_CHAR_ID}_cleanup"
-export TARGET_CATALOG="${TARGET_CATALOG:-main}"
+# default catalog from workspace settings when unset
+if [[ -z "${TARGET_CATALOG:-}" ]]; then
+  TARGET_CATALOG="$(resolve_default_uc_catalog)"
+fi
+export TARGET_CATALOG
 export TARGET_SCHEMA="${WHOAMI}_${NINE_CHAR_ID}"
 export STAGING_CATALOG="${TARGET_CATALOG}"
 export STAGING_SCHEMA="${TARGET_SCHEMA}"
-export ELOG_CATALOG="${ELOG_CATALOG:-main}"
+if [[ -z "${ELOG_CATALOG:-}" ]]; then
+  ELOG_CATALOG="${TARGET_CATALOG}"
+fi
+export ELOG_CATALOG
 export ELOG_SCHEMA="${ELOG_SCHEMA:-${WHOAMI}}"
 
 # Build connection spec into STATE so we can export to tfvars

@@ -148,6 +148,12 @@ export USER_PASSWORD=${USER_PASSWORD:-""}
 export CONNECTION_NAME="${CONNECTION_NAME:-""}"
 export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
 
+# pipeline architecture: cdc (gw+ingest) | qbc (query-based) | cdc_single_pipeline
+export CDC_QBC=${CDC_QBC:-"cdc"}
+# compute per pipeline: default (let DBX decide) | classic | serverless
+export COMPUTE_GATEWAY=${COMPUTE_GATEWAY:-"default"}
+export COMPUTE_INGEST=${COMPUTE_INGEST:-"default"}
+
 # ingestion pipeline options
 export SCD_TYPE=${SCD_TYPE:-""} # SCD_TYPE_1 | SCD_TYPE_2
 export INGESTION_PIPELINE_CONTINUOUS=${INGESTION_PIPELINE_CONTINUOUS:-false}
@@ -531,6 +537,45 @@ export -f MYSQLCLI
 export WHOAMI_USERNAME=${WHOAMI_USERNAME:-$(whoami)}
 export WHOAMI="$(echo "$WHOAMI_USERNAME" | tr -d '\-\.\_')"
 
+# Fail early if the effective Databricks CLI profile is missing from ~/.databrickscfg.
+# Without this, DBX/auth falls through to DEFAULT and fails with a cryptic resolve error.
+ensure_databricks_profile() {
+    local cfg="${DATABRICKS_CONFIG_FILE:-$HOME/.databrickscfg}"
+    local effective=""
+    local profiles=""
+    local p=""
+
+    if [[ -n "${DATABRICKS_CONFIG_PROFILE:-}" ]]; then
+        effective="${DATABRICKS_CONFIG_PROFILE}"
+    elif [[ -n "${DBX_PROFILE:-}" ]]; then
+        effective="${DBX_PROFILE}"
+    else
+        effective="DEFAULT"
+    fi
+
+    if [[ ! -f "$cfg" ]]; then
+        echo "ERROR: Databricks config not found: $cfg" >&2
+        echo "Fix: run 'databricks auth login --profile <name>' or export DATABRICKS_CONFIG_PROFILE=<name>" >&2
+        kill -INT $$
+    fi
+
+    if ! grep -Fxq "[${effective}]" "$cfg"; then
+        echo "ERROR: Databricks profile '${effective}' not found in ${cfg}" >&2
+        echo "Available profiles:" >&2
+        while IFS= read -r p; do
+            [[ -z "$p" || "$p" == "__settings__" ]] && continue
+            echo "  $p" >&2
+        done < <(grep -E '^\[' "$cfg" | tr -d '[]')
+        echo "Fix: export DATABRICKS_CONFIG_PROFILE=<name>   # e.g. e2dogfood" >&2
+        kill -INT $$
+    fi
+
+    export DATABRICKS_CONFIG_PROFILE="$effective"
+    export DBX_PROFILE="$effective"
+}
+export -f ensure_databricks_profile
+ensure_databricks_profile
+
 if [[ -z "$DBX_USERNAME" ]]; then
     DB_EXIT_ON_ERROR="PRINT_EXIT" DBX current-user me
     DBX_USERNAME="$(jq -r .userName /tmp/dbx_stdout.$$)"
@@ -541,6 +586,20 @@ export DBX_USERNAME_NO_DOMAIN_DOT="${DBX_USERNAME_NO_DOMAIN//./_}"   # . to _
 
 export RG_NAME=${RG_NAME:-${WHOAMI}-rg}                # resource group name
 export DBX_WORKSPACE_PATH=${DBX_WORKSPACE_PATH:-"/Users/${DBX_USERNAME}/lfcddemokit"}
+
+# Workspace default Unity Catalog catalog (settings default-namespace).
+# Safe for command substitution: DBX command-echo goes to stderr.
+resolve_default_uc_catalog() {
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX settings default-namespace get 1>&2
+    local cat
+    cat="$(jq -r '.namespace.value // empty' /tmp/dbx_stdout.$$)"
+    if [[ -z "$cat" || "$cat" == "null" ]]; then
+        echo "ERROR: could not resolve default UC catalog from settings default-namespace" >&2
+        kill -INT $$
+    fi
+    printf '%s' "$cat"
+}
+export -f resolve_default_uc_catalog
 
 # return 3 variables
 read_fqdn_dba_if_host(){

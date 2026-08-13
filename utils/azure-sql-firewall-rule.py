@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Sync Azure SQL server (embedded) firewall rules from DB_FIREWALL_CIDRS.
+"""Sync Azure PaaS DB firewall rules from DB_FIREWALL_CIDRS.
 
-Accepts CIDRs (e.g. 35.94.1.248/32) and start-end ranges
-(e.g. 0.0.0.1-255.255.255.254) mixed in the same list.
+Supports Azure SQL (embedded), MySQL Flexible Server, and PostgreSQL
+Flexible Server via --kind. Accepts CIDRs (e.g. 35.94.1.248/32) and
+start-end ranges (e.g. 0.0.0.1-255.255.255.254) mixed in the same list.
 
 Complementary to forgedb-firewall-rules/azure-firewall-rule.py (NSG).
-This script manages PaaS Azure SQL server firewall rules via az CLI.
 """
 
 from __future__ import annotations
@@ -19,13 +19,15 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import typer
 
 # --- load bash_utils/cmd-wrapper-helpers.py (hyphenated filename) ---
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _CMD_HELPERS = _REPO_ROOT / "bash_utils" / "cmd-wrapper-helpers.py"
+
+FirewallKind = Literal["sql", "mysql", "postgres"]
 
 
 def _load_cmd_module():
@@ -231,29 +233,80 @@ def resolve_resource_group(resource_group: str | None) -> str:
     return str(value)
 
 
+def _firewall_az_args(
+    *,
+    action: Literal["create", "update"],
+    kind: FirewallKind,
+    rule: ProposedRule,
+    server: str,
+    resource_group: str,
+) -> list[str]:
+    """Build az CLI argv for create/update of a firewall rule."""
+    common_ips = [
+        "--start-ip-address",
+        rule.start_ip,
+        "--end-ip-address",
+        rule.end_ip,
+        "-g",
+        resource_group,
+    ]
+    if kind == "sql":
+        return [
+            "az",
+            "sql",
+            "server",
+            "firewall-rule",
+            action,
+            "-n",
+            rule.name,
+            "-s",
+            server,
+            *common_ips,
+        ]
+    if kind == "mysql":
+        return [
+            "az",
+            "mysql",
+            "flexible-server",
+            "firewall-rule",
+            action,
+            "--rule-name",
+            rule.name,
+            "--name",
+            server,
+            *common_ips,
+        ]
+    # postgres
+    return [
+        "az",
+        "postgres",
+        "flexible-server",
+        "firewall-rule",
+        action,
+        "--name",
+        rule.name,
+        "--server-name",
+        server,
+        *common_ips,
+    ]
+
+
 def _create_rule(
     *,
     rule: ProposedRule,
     server: str,
     resource_group: str,
+    kind: FirewallKind,
     cfg: Any,
 ) -> None:
     rc = CMD(
-        "az",
-        "sql",
-        "server",
-        "firewall-rule",
-        "create",
-        "-n",
-        rule.name,
-        "-s",
-        server,
-        "-g",
-        resource_group,
-        "--start-ip-address",
-        rule.start_ip,
-        "--end-ip-address",
-        rule.end_ip,
+        *_firewall_az_args(
+            action="create",
+            kind=kind,
+            rule=rule,
+            server=server,
+            resource_group=resource_group,
+        ),
         config=cfg,
     )
     if rc != 0:
@@ -265,24 +318,17 @@ def _update_rule(
     rule: ProposedRule,
     server: str,
     resource_group: str,
+    kind: FirewallKind,
     cfg: Any,
 ) -> None:
     rc = CMD(
-        "az",
-        "sql",
-        "server",
-        "firewall-rule",
-        "update",
-        "-n",
-        rule.name,
-        "-s",
-        server,
-        "-g",
-        resource_group,
-        "--start-ip-address",
-        rule.start_ip,
-        "--end-ip-address",
-        rule.end_ip,
+        *_firewall_az_args(
+            action="update",
+            kind=kind,
+            rule=rule,
+            server=server,
+            resource_group=resource_group,
+        ),
         config=cfg,
     )
     if rc != 0:
@@ -293,6 +339,7 @@ def sync_my_ip_rule(
     *,
     server: str,
     resource_group: str,
+    kind: FirewallKind,
     by_name: dict[str, tuple[str, str]],
     apply: bool,
 ) -> None:
@@ -326,10 +373,14 @@ def sync_my_ip_rule(
 
     cfg = CmdConfig(exit_on_error="PRINT_EXIT")
     if action == "create":
-        _create_rule(rule=rule, server=server, resource_group=resource_group, cfg=cfg)
+        _create_rule(
+            rule=rule, server=server, resource_group=resource_group, kind=kind, cfg=cfg
+        )
         print(f"Created VPN rule {name}.")
     else:
-        _update_rule(rule=rule, server=server, resource_group=resource_group, cfg=cfg)
+        _update_rule(
+            rule=rule, server=server, resource_group=resource_group, kind=kind, cfg=cfg
+        )
         print(f"Updated VPN rule {name}.")
 
 
@@ -337,6 +388,7 @@ def sync_firewall(
     *,
     server: str,
     resource_group: str,
+    kind: FirewallKind,
     existing_rules_path: Path,
     cidrs_raw: str,
     apply: bool,
@@ -354,7 +406,7 @@ def sync_firewall(
         else:
             to_create.append(rule)
 
-    print(f"Target: server={server} resource_group={resource_group}")
+    print(f"Target: kind={kind} server={server} resource_group={resource_group}")
     print(
         f"Desired specs: {len(proposed)}  already present: {len(already)}  to create: {len(to_create)}"
     )
@@ -367,6 +419,7 @@ def sync_firewall(
         sync_my_ip_rule(
             server=server,
             resource_group=resource_group,
+            kind=kind,
             by_name=by_name,
             apply=apply,
         )
@@ -377,10 +430,12 @@ def sync_firewall(
 
     cfg = CmdConfig(exit_on_error="PRINT_EXIT")
     for rule in to_create:
-        _create_rule(rule=rule, server=server, resource_group=resource_group, cfg=cfg)
+        _create_rule(
+            rule=rule, server=server, resource_group=resource_group, kind=kind, cfg=cfg
+        )
 
     if to_create:
-        print(f"Created {len(to_create)} Azure SQL firewall rule(s) from specs.")
+        print(f"Created {len(to_create)} Azure {kind} firewall rule(s) from specs.")
     elif proposed:
         print("No CIDR/range rules to create.")
 
@@ -389,18 +444,25 @@ def sync_firewall(
 def main(
     server: Annotated[
         str,
-        typer.Option("--server", "-s", help="Azure SQL server name (DB_HOST)."),
+        typer.Option("--server", "-s", help="Azure DB server name (DB_HOST)."),
     ],
     existing_rules: Annotated[
         Path,
         typer.Option(
             "--existing-rules",
-            help="JSON array from: az sql server firewall-rule list",
+            help="JSON array from az … firewall-rule list",
             exists=True,
             dir_okay=False,
             readable=True,
         ),
     ],
+    kind: Annotated[
+        FirewallKind,
+        typer.Option(
+            "--kind",
+            help="Azure PaaS DB kind: sql | mysql | postgres (default sql).",
+        ),
+    ] = "sql",
     resource_group: Annotated[
         str | None,
         typer.Option(
@@ -427,10 +489,10 @@ def main(
     ] = False,
     apply: Annotated[
         bool,
-        typer.Option("--apply", help="Create/update Azure SQL firewall rules."),
+        typer.Option("--apply", help="Create/update Azure firewall rules."),
     ] = False,
 ) -> None:
-    """Diff existing Azure SQL firewall rules vs DB_FIREWALL_CIDRS; optionally apply."""
+    """Diff existing Azure PaaS firewall rules vs DB_FIREWALL_CIDRS; optionally apply."""
     cidrs_raw = (cidrs if cidrs is not None else os.environ.get("DB_FIREWALL_CIDRS", "")).strip()
     if not cidrs_raw and not my_ip:
         print("No CIDRs provided (--cidrs or DB_FIREWALL_CIDRS) and --my-ip not set.", file=sys.stderr)
@@ -439,6 +501,7 @@ def main(
     sync_firewall(
         server=server,
         resource_group=resolve_resource_group(resource_group),
+        kind=kind,
         existing_rules_path=existing_rules,
         cidrs_raw=cidrs_raw,
         apply=apply,

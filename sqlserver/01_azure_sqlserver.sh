@@ -105,6 +105,7 @@ firewall_rule_add() {
     cmd_mask_azure_secrets
     CMD az sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"
     python3 "${_lfc_root}/utils/azure-sql-firewall-rule.py" \
+        --kind sql \
         --server "${DB_HOST}" \
         -g "${RG_NAME}" \
         --existing-rules "/tmp/az_stdout.$$" \
@@ -278,6 +279,7 @@ CMD_EXIT_ON_ERROR=PRINT_EXIT
 cmd_mask_azure_secrets
 CMD az sql server firewall-rule list -s "${DB_HOST}" -g "${RG_NAME}"
 python3 "${_LFC_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/utils/azure-sql-firewall-rule.py" \
+    --kind sql \
     --server "${DB_HOST}" \
     -g "${RG_NAME}" \
     --existing-rules "/tmp/az_stdout.$$" \

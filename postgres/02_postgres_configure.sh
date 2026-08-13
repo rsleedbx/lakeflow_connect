@@ -19,6 +19,11 @@ if [[ "$INITIAL_SNAPSHOT_ROWS" -eq 0 ]] && [[ "${DB_SCHEMA}" != *"_${INITIAL_SNA
     echo "Changing schema to $DB_SCHEMA"
 fi
 
+_POSTGRES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" && pwd)"
+export _POSTGRES_DIR
+_LFC_REPO_ROOT="${_LFC_REPO_ROOT:-$(cd "${_POSTGRES_DIR}/.." && pwd)}"
+export _LFC_REPO_ROOT
+
 # #############################################################################
 # dml generator for postgres
 
@@ -54,7 +59,7 @@ fi
 
 # #############################################################################
 
-# connect to master catalog
+# connect to postgres catalog as DBA
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="postgres" TEST_DB_CONNECT
 
 # #############################################################################
@@ -125,7 +130,7 @@ export -f db_replication_cleanup
 db_orphaned_publication_cleanup() {
     echo "cleaning orphaned postgres publications"
     echo "
-            DO $$
+            DO \$\$
             DECLARE
                 pub_record RECORD;
                 has_active_slots BOOLEAN;
@@ -144,34 +149,18 @@ db_orphaned_publication_cleanup() {
                         EXECUTE format('DROP PUBLICATION IF EXISTS %I', pub_record.pubname);
                     END LOOP;
                 END IF;
-            END $$;
+            END \$\$;
     " | DB_CATALOG="postgres" SQLCLI
 }
 export -f db_orphaned_publication_cleanup
 
 db_enable_replication_slot() {
+    # Tables must already exist (CREATE PUBLICATION FOR TABLE requires them).
     echo "CREATE PUBLICATION ${DB_SCHEMA}_pub FOR table ${DB_SCHEMA}.intpk, ${DB_SCHEMA}.dtix" | SQLCLI
     echo "SELECT 'init' FROM pg_create_logical_replication_slot('${DB_SCHEMA}', 'pgoutput')" | SQLCLI
     echo "SELECT * FROM pg_replication_slots WHERE slot_name = '${DB_SCHEMA}'" | SQLCLI
 }
 export -f db_enable_replication_slot
-
-
-db_replication_cleanup
-db_orphaned_publication_cleanup
-db_enable_replication_slot
-# [0-9]+ = datoid; ,${DB_CATALOG}, = database column (non-empty)
-if grep -qE "^${DB_SCHEMA},pgoutput,logical,[0-9]+,${DB_CATALOG}," /tmp/psql_stdout.$$; then
-    echo "replication ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"
-else
-    cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
-    return 1
-fi
-
-# #############################################################################
-
-# enable schema evolution
-
 
 # #############################################################################
 
@@ -217,6 +206,66 @@ else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
     return 1
 fi
 fi
+
+# #############################################################################
+# publication + slot (after tables exist)
+
+db_replication_cleanup
+db_orphaned_publication_cleanup
+db_enable_replication_slot
+# [0-9]+ = datoid; ,${DB_CATALOG}, = database column (non-empty)
+if grep -qE "^${DB_SCHEMA},pgoutput,logical,[0-9]+,${DB_CATALOG}," /tmp/psql_stdout.$$; then
+    echo "replication ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"
+else
+    cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+    return 1
+fi
+
+# #############################################################################
+# Optional: inline DDL change tracking (Lakeflow PG DDL audit objects)
+
+echo -e "\nInstalling Lakeflow PG DDL change-tracking (latest registered)"
+echo -e   "-------------------------------------------------------------\n"
+
+DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" \
+  python3 "${_LFC_REPO_ROOT}/utils/postgres-ddl-change-tracking.py" \
+    --apply || return 1
+
+# Add audit table to the demo publication (must run as publication owner / DBA)
+DDL_AUDIT_TABLE="lakeflow_ddl_audit_table_1_0"
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" \
+  DB_CATALOG="${DB_CATALOG}" SQLCLI <<EOF
+DO \$\$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = '${DB_SCHEMA}_pub'
+      AND schemaname = 'public'
+      AND tablename = '${DDL_AUDIT_TABLE}'
+  ) THEN
+    EXECUTE format('ALTER PUBLICATION %I ADD TABLE public.%I', '${DB_SCHEMA}_pub', '${DDL_AUDIT_TABLE}');
+  END IF;
+END \$\$;
+EOF
+
+# Verify audit objects
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" \
+  DB_CATALOG="${DB_CATALOG}" SQLCLI -c "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'lakeflow_ddl_audit_table%';" </dev/null
+if ! grep -q "${DDL_AUDIT_TABLE}" /tmp/psql_stdout.$$; then
+    echo "ERROR: DDL audit table ${DDL_AUDIT_TABLE} not found after install" >&2
+    cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+    return 1
+fi
+echo "DDL audit table ok: ${DDL_AUDIT_TABLE}"
+
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" \
+  DB_CATALOG="${DB_CATALOG}" SQLCLI -c "SELECT evtname FROM pg_event_trigger WHERE evtname LIKE 'lakeflow%';" </dev/null
+if ! grep -q "lakeflow_ddl_audit_trigger" /tmp/psql_stdout.$$; then
+    echo "ERROR: lakeflow DDL event triggers not found after install" >&2
+    cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+    return 1
+fi
+echo "DDL event triggers ok"
 
 # #############################################################################
 

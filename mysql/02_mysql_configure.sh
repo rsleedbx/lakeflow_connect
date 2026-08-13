@@ -32,8 +32,8 @@ fi
 
 # #############################################################################
 
-# connect to master catalog
-echo "select 1" | DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="mysql" SQLCLI_DBA
+# connect to mysql system catalog as DBA
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="mysql" TEST_DB_CONNECT
 
 # #############################################################################
 # create user login.  user by default = role + login
@@ -51,22 +51,17 @@ if [[ -z "$USER_USERNAME" || "$USER_USERNAME" == "$USER_BASENAME" ]]; then
     fi
 fi
 
-echo "here"
-
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="mysql" SQLCLI_DBA <<EOF
-create user if not exists ${USER_USERNAME}@'%' IDENTIFIED BY '${USER_PASSWORD}';
--- set / reset password
-alter user ${USER_USERNAME} IDENTIFIED BY '${USER_PASSWORD}';
--- grant access
+create user if not exists ${USER_USERNAME}@'%' IDENTIFIED WITH caching_sha2_password BY '${USER_PASSWORD}';
+-- set / reset password + auth plugin (MySQL 8 / Azure Flexible Server)
+alter user ${USER_USERNAME}@'%' IDENTIFIED WITH caching_sha2_password BY '${USER_PASSWORD}';
+-- grant DML access for demo loop (CDC replication grants come from lakeflow_setup_cdc_user)
 grant alter,create,drop, select,insert,delete, update on *.* to ${USER_USERNAME};
--- enable replication
-grant REPLICATION CLIENT on *.* to ${USER_USERNAME};
-grant REPLICATION SLAVE on *.* to ${USER_USERNAME};
 FLUSH PRIVILEGES;
 EOF
 
 # connect to mysql as a user
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PASSWORD" DB_CATALOG="mysql" SQLCLI </dev/null
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="$USER_USERNAME" DB_PASSWORD="$USER_PASSWORD" DB_CATALOG="mysql" TEST_DB_CONNECT
 
 # #############################################################################
 
@@ -183,6 +178,41 @@ else cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$
     return 1
 fi
 fi
+
+# #############################################################################
+# Install Lakeflow MySQL utility objects + CDC grants (after tables exist)
+# Docs: https://docs.databricks.com/aws/en/ingestion/lakeflow-connect/mysql-utility-script
+# Skip lakeflow_cdc_setup on Azure — binlog is set via server parameters in 01.
+
+echo -e "\nInstalling MySQL utility objects + CDC grants (latest registered)"
+echo -e   "----------------------------------------------------------------\n"
+
+DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_SCHEMA}" \
+  python3 "${_LFC_REPO_ROOT}/utils/mysql-utility-script.py" \
+    --apply \
+    --user "${USER_USERNAME}" \
+    --tables "\`${DB_SCHEMA}\`.*" || return 1
+
+# Verify utility procedures installed in DB_SCHEMA
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="${DB_SCHEMA}" SQLCLI_DBA -e \
+  "SELECT ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='${DB_SCHEMA}' AND ROUTINE_TYPE='PROCEDURE' AND ROUTINE_NAME IN ('lakeflow_cdc_setup','lakeflow_setup_cdc_user') ORDER BY ROUTINE_NAME;" \
+  </dev/null
+if ! grep -q "lakeflow_cdc_setup" /tmp/mysql_stdout.$$ || ! grep -q "lakeflow_setup_cdc_user" /tmp/mysql_stdout.$$; then
+    echo "ERROR: lakeflow utility procedures not found in schema ${DB_SCHEMA}" >&2
+    cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$
+    return 1
+fi
+echo "utility procedures ok: lakeflow_cdc_setup, lakeflow_setup_cdc_user"
+
+# Verify CDC user grants (replication + select)
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="mysql" SQLCLI_DBA -e \
+  "SHOW GRANTS FOR '${USER_USERNAME}'@'%';" </dev/null
+if ! grep -qi "REPLICATION" /tmp/mysql_stdout.$$; then
+    echo "ERROR: expected REPLICATION grants for ${USER_USERNAME}@'%'" >&2
+    cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$
+    return 1
+fi
+echo "CDC grants ok for ${USER_USERNAME}"
 
 # #############################################################################
 

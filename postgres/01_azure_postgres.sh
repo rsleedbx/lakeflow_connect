@@ -94,6 +94,16 @@ begin
         commit;
         update intpk set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from intpk);
         commit;
+        -- strpk (string primary key)
+        insert into strpk (pk, dt) values
+            (format('"'s%s-1'"', counter), CURRENT_TIMESTAMP),
+            (format('"'s%s-2'"', counter), CURRENT_TIMESTAMP),
+            (format('"'s%s-3'"', counter), CURRENT_TIMESTAMP);
+        commit;
+        delete from strpk where pk=(select min(pk) from strpk);
+        commit;
+        update strpk set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from strpk);
+        commit;
         -- dtix
         insert into dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
         commit;
@@ -117,6 +127,13 @@ begin
         insert into intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
         delete from intpk where pk=(select min(pk) from intpk);
         update intpk set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from intpk);
+        -- strpk (string primary key)
+        insert into strpk (pk, dt) values
+            (format('"'s%s-1'"', counter), CURRENT_TIMESTAMP),
+            (format('"'s%s-2'"', counter), CURRENT_TIMESTAMP),
+            (format('"'s%s-3'"', counter), CURRENT_TIMESTAMP);
+        delete from strpk where pk=(select min(pk) from strpk);
+        update strpk set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from strpk);
         -- dtix
         insert into dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
         -- wait

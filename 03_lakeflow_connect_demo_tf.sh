@@ -52,7 +52,7 @@ fi
 export DATABRICKS_HOST_NAME
 
 if [[ -z "${CONNECTION_NAME:-}" ]]; then
-  CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr ' .@' '_')
+  CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr ' .@-' '_')
 fi
 export CONNECTION_NAME
 

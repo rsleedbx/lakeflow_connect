@@ -19,6 +19,10 @@ if [[ "$INITIAL_SNAPSHOT_ROWS" -eq 0 ]] && [[ "${DB_SCHEMA}" != *"_${INITIAL_SNA
     echo "Changing schema to $DB_SCHEMA"
 fi
 
+export DB_SCHEMA
+export DB_SCHEMA_SCH="${DB_SCHEMA}_sch"
+echo "Demo schemas: DB_SCHEMA=${DB_SCHEMA} (per-table) DB_SCHEMA_SCH=${DB_SCHEMA_SCH} (*_sch tables)"
+
 _POSTGRES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" && pwd)"
 export _POSTGRES_DIR
 _LFC_REPO_ROOT="${_LFC_REPO_ROOT:-$(cd "${_POSTGRES_DIR}/.." && pwd)}"
@@ -29,32 +33,41 @@ export _LFC_REPO_ROOT
 
 # make sure to quote echo "$sql_dml_generator" otherwise the newline will be removed 
 if ! declare -p sql_dml_generator &> /dev/null; then
-echo "using default sql_dml_generator.  echo \"\$sql_dml_generator\" to view" 
-sql_dml_generator='
-set search_path='${DB_SCHEMA}';
-do $$
-declare 
+echo "using default sql_dml_generator.  echo \"\$sql_dml_generator\" to view"
+_sql_dml_body=""
+for _sfx in "" "_sch"; do
+  if [[ -z "${_sfx}" ]]; then
+    _schema="${DB_SCHEMA}"
+  else
+    _schema="${DB_SCHEMA_SCH}"
+  fi
+  _sql_dml_body+="
+        insert into ${_schema}.intpk${_sfx} (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
+        delete from ${_schema}.intpk${_sfx} where pk=(select min(pk) from ${_schema}.intpk${_sfx});
+        update ${_schema}.intpk${_sfx} set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from ${_schema}.intpk${_sfx});
+        insert into ${_schema}.strpk${_sfx} (pk, dt) values
+            (format('s%s-1', counter), CURRENT_TIMESTAMP),
+            (format('s%s-2', counter), CURRENT_TIMESTAMP),
+            (format('s%s-3', counter), CURRENT_TIMESTAMP);
+        delete from ${_schema}.strpk${_sfx} where pk=(select min(pk) from ${_schema}.strpk${_sfx});
+        update ${_schema}.strpk${_sfx} set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from ${_schema}.strpk${_sfx});
+        insert into ${_schema}.dtix${_sfx} (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);"
+done
+sql_dml_generator="
+do \$\$
+declare
     counter integer := 0;
 begin
     while counter >= 0 loop
-        -- intpk
-        insert into intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
+${_sql_dml_body}
         commit;
-        delete from intpk where pk=(select min(pk) from intpk);
-        commit;
-        update intpk set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from intpk);
-        commit;
-        -- dtix
-        insert into dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
-        commit;
-        -- wait
-		raise notice '"'Counter %'"', counter;
-	    counter := counter + 1;
+        raise notice 'Counter %', counter;
+        counter := counter + 1;
         perform pg_sleep('${DML_INTERVAL_SEC}');
     end loop;
 end;
-$$;
-'
+\$\$;
+"
 fi
 
 # #############################################################################
@@ -170,7 +183,8 @@ export -f db_orphaned_publication_cleanup
 
 db_enable_replication_slot() {
     # Tables must already exist (CREATE PUBLICATION FOR TABLE requires them).
-    echo "CREATE PUBLICATION ${DB_SCHEMA}_pub FOR table ${DB_SCHEMA}.intpk, ${DB_SCHEMA}.dtix" | SQLCLI
+    # One publication covers DB_SCHEMA + DB_SCHEMA_SCH (*_sch tables).
+    echo "CREATE PUBLICATION ${DB_SCHEMA}_pub FOR TABLE ${DB_SCHEMA}.intpk, ${DB_SCHEMA}.strpk, ${DB_SCHEMA}.dtix, ${DB_SCHEMA_SCH}.intpk_sch, ${DB_SCHEMA_SCH}.strpk_sch, ${DB_SCHEMA_SCH}.dtix_sch" | SQLCLI
     echo "SELECT 'init' FROM pg_create_logical_replication_slot('${DB_SCHEMA}', 'pgoutput')" | SQLCLI
     echo "SELECT * FROM pg_replication_slots WHERE slot_name = '${DB_SCHEMA}'" | SQLCLI
 }
@@ -178,69 +192,86 @@ export -f db_enable_replication_slot
 
 # #############################################################################
 
-# create schema (DBA creates/owns transfer so re-runs work across users)
+# create schemas: DB_SCHEMA (per-table) + DB_SCHEMA_SCH (*_sch tables)
 
-echo -e "Creating schema ${DB_SCHEMA} owned by ${USER_USERNAME}\n"
+echo -e "Creating schemas ${DB_SCHEMA} and ${DB_SCHEMA_SCH} owned by ${USER_USERNAME}\n"
 
+for _demo_schema in "${DB_SCHEMA}" "${DB_SCHEMA_SCH}"; do
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI_DBA <<EOF
-CREATE SCHEMA IF NOT EXISTS ${DB_SCHEMA} AUTHORIZATION ${USER_USERNAME};
-ALTER SCHEMA ${DB_SCHEMA} OWNER TO ${USER_USERNAME};
-GRANT ALL ON SCHEMA ${DB_SCHEMA} TO ${USER_USERNAME};
-GRANT ALL ON ALL TABLES IN SCHEMA ${DB_SCHEMA} TO ${USER_USERNAME};
-GRANT ALL ON ALL SEQUENCES IN SCHEMA ${DB_SCHEMA} TO ${USER_USERNAME};
-ALTER DEFAULT PRIVILEGES IN SCHEMA ${DB_SCHEMA} GRANT ALL ON TABLES TO ${USER_USERNAME};
-ALTER DEFAULT PRIVILEGES IN SCHEMA ${DB_SCHEMA} GRANT ALL ON SEQUENCES TO ${USER_USERNAME};
+CREATE SCHEMA IF NOT EXISTS ${_demo_schema} AUTHORIZATION ${USER_USERNAME};
+ALTER SCHEMA ${_demo_schema} OWNER TO ${USER_USERNAME};
+GRANT ALL ON SCHEMA ${_demo_schema} TO ${USER_USERNAME};
+GRANT ALL ON ALL TABLES IN SCHEMA ${_demo_schema} TO ${USER_USERNAME};
+GRANT ALL ON ALL SEQUENCES IN SCHEMA ${_demo_schema} TO ${USER_USERNAME};
+ALTER DEFAULT PRIVILEGES IN SCHEMA ${_demo_schema} GRANT ALL ON TABLES TO ${USER_USERNAME};
+ALTER DEFAULT PRIVILEGES IN SCHEMA ${_demo_schema} GRANT ALL ON SEQUENCES TO ${USER_USERNAME};
 SELECT 1;
 EOF
-# /tmp/psql_stdout.$$ will be 0 if schema was created.  drop the schema when done
 if [[ ! -s /tmp/psql_stderr.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
+    if [[ "${_demo_schema}" == "${DB_SCHEMA_SCH}" ]]; then
+      _drops="drop table if exists ${_demo_schema}.intpk_sch;
+    drop table if exists ${_demo_schema}.strpk_sch;
+    drop table if exists ${_demo_schema}.dtix_sch;"
+    else
+      _drops="drop table if exists ${_demo_schema}.intpk;
+    drop table if exists ${_demo_schema}.strpk;
+    drop table if exists ${_demo_schema}.dtix;"
+    fi
     nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DB_STDOUT=~/nohup.out DB_STDERR=~/nohup.out DB_CATALOG="$DB_CATALOG" SQLCLI >>~/nohup.out 2>&1 << EOF &
-    drop table if exists ${DB_SCHEMA}.intpk; 
-    drop table if exists ${DB_SCHEMA}.dtix; 
-    drop schema if exists ${DB_SCHEMA};
+    ${_drops}
+    drop schema if exists ${_demo_schema};
 EOF
-    echo -e "\nDeleting ${DB_SCHEMA} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n" 
+    echo -e "\nDeleting ${_demo_schema} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n"
 fi
+done
 
 # #############################################################################
 
 # create tables
 
-echo -e "Creating tables\n"
+echo -e "Creating tables in ${DB_SCHEMA} and ${DB_SCHEMA_SCH}\n"
 
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
     create table if not exists ${DB_SCHEMA}.intpk (pk serial primary key, dt timestamp);
+    create table if not exists ${DB_SCHEMA}.strpk (pk text primary key, dt timestamp);
     create table if not exists ${DB_SCHEMA}.dtix (dt timestamp);
+    create table if not exists ${DB_SCHEMA_SCH}.intpk_sch (pk serial primary key, dt timestamp);
+    create table if not exists ${DB_SCHEMA_SCH}.strpk_sch (pk text primary key, dt timestamp);
+    create table if not exists ${DB_SCHEMA_SCH}.dtix_sch (dt timestamp);
 EOF
 
-# Ensure demo user owns existing tables (schema may predate a USER_USERNAME change)
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI_DBA <<EOF
 ALTER TABLE IF EXISTS ${DB_SCHEMA}.intpk OWNER TO ${USER_USERNAME};
+ALTER TABLE IF EXISTS ${DB_SCHEMA}.strpk OWNER TO ${USER_USERNAME};
 ALTER TABLE IF EXISTS ${DB_SCHEMA}.dtix OWNER TO ${USER_USERNAME};
+ALTER TABLE IF EXISTS ${DB_SCHEMA_SCH}.intpk_sch OWNER TO ${USER_USERNAME};
+ALTER TABLE IF EXISTS ${DB_SCHEMA_SCH}.strpk_sch OWNER TO ${USER_USERNAME};
+ALTER TABLE IF EXISTS ${DB_SCHEMA_SCH}.dtix_sch OWNER TO ${USER_USERNAME};
 GRANT ALL ON ALL TABLES IN SCHEMA ${DB_SCHEMA} TO ${USER_USERNAME};
 GRANT ALL ON ALL SEQUENCES IN SCHEMA ${DB_SCHEMA} TO ${USER_USERNAME};
+GRANT ALL ON ALL TABLES IN SCHEMA ${DB_SCHEMA_SCH} TO ${USER_USERNAME};
+GRANT ALL ON ALL SEQUENCES IN SCHEMA ${DB_SCHEMA_SCH} TO ${USER_USERNAME};
 SELECT 1;
 EOF
 
 if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
     insert into ${DB_SCHEMA}.intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
+    insert into ${DB_SCHEMA}.strpk (pk, dt) values ('s1',CURRENT_TIMESTAMP),('s2',CURRENT_TIMESTAMP),('s3',CURRENT_TIMESTAMP);
     insert into ${DB_SCHEMA}.dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
+    insert into ${DB_SCHEMA_SCH}.intpk_sch (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
+    insert into ${DB_SCHEMA_SCH}.strpk_sch (pk, dt) values ('s1',CURRENT_TIMESTAMP),('s2',CURRENT_TIMESTAMP),('s3',CURRENT_TIMESTAMP);
+    insert into ${DB_SCHEMA_SCH}.dtix_sch (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
     select '${DB_SCHEMA}.intpk',max(pk) from ${DB_SCHEMA}.intpk;
-    select '${DB_SCHEMA}.dtix',dt from ${DB_SCHEMA}.dtix limit 1;    
+    select '${DB_SCHEMA}.strpk',max(pk) from ${DB_SCHEMA}.strpk;
+    select '${DB_SCHEMA}.dtix',dt from ${DB_SCHEMA}.dtix limit 1;
+    select '${DB_SCHEMA_SCH}.intpk_sch',max(pk) from ${DB_SCHEMA_SCH}.intpk_sch;
+    select '${DB_SCHEMA_SCH}.strpk_sch',max(pk) from ${DB_SCHEMA_SCH}.strpk_sch;
+    select '${DB_SCHEMA_SCH}.dtix_sch',dt from ${DB_SCHEMA_SCH}.dtix_sch limit 1;
 EOF
-
-# .\+ = one or more so that nulls are not accepted
-if grep "^${DB_SCHEMA}.intpk,.\+$" /tmp/psql_stdout.$$; then echo "table intpk ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
-    return 1
-fi
-
-# .\+ = one or more so that nulls are not accepted
-if grep "^${DB_SCHEMA}.dtix,.\+$" /tmp/psql_stdout.$$ ; then echo "table dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
-    return 1
-fi
+for _t in "${DB_SCHEMA}.intpk" "${DB_SCHEMA}.strpk" "${DB_SCHEMA}.dtix" "${DB_SCHEMA_SCH}.intpk_sch" "${DB_SCHEMA_SCH}.strpk_sch" "${DB_SCHEMA_SCH}.dtix_sch"; do
+  if grep "^${_t},.\+$" /tmp/psql_stdout.$$; then echo "table ok ${_t}"; else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
+done
 fi
 
 # #############################################################################
@@ -315,41 +346,46 @@ echo "DDL event triggers ok"
 
 # enable replication tables
 
-# get the table replication status
 DB_OUT_SUFFIX="replication_table" DB_EXIT_ON_ERROR="PRINT_EXIT" SQLCLI </dev/null -c "
     SELECT nspname, relname, relreplident
-    FROM pg_class as c JOIN pg_namespace AS ns ON c.relnamespace = ns.oid 
-    WHERE nspname in ('$DB_SCHEMA') AND relname in ('dtix','intpk')
-" 
+    FROM pg_class as c JOIN pg_namespace AS ns ON c.relnamespace = ns.oid
+    WHERE (nspname = '${DB_SCHEMA}' AND relname in ('dtix','intpk','strpk'))
+       OR (nspname = '${DB_SCHEMA_SCH}' AND relname in ('dtix_sch','intpk_sch','strpk_sch'))
+"
 
-# dtix does not have primary key
-if [[ "$CDC_CT_MODE" == "BOTH" || "$CDC_CT_MODE" == "CDC" ]]; then
-    if [[ -n $(cat /tmp/psql_stdout_replication_table.$$ | grep "${DB_SCHEMA},dtix,f") ]]; 
-        then echo "table full replica enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-    else 
-        SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.dtix replica identity full;"
+# Helper: set replica identity for one table
+_pg_set_replica() {
+    local sch="$1" tbl="$2" want="$3"  # want: f|d|n
+    local label="$4"
+    if [[ -n $(grep "${sch},${tbl},${want}" /tmp/psql_stdout_replication_table.$$) ]]; then
+        echo "table ${tbl} replica ${label} ok ${sch}"
+    else
+        case "$want" in
+          f) SQLCLI </dev/null -c "alter table ${sch}.${tbl} replica identity full;" ;;
+          d) SQLCLI </dev/null -c "alter table ${sch}.${tbl} replica identity default;" ;;
+          n) SQLCLI </dev/null -c "alter table ${sch}.${tbl} replica identity nothing;" ;;
+        esac
     fi
+}
+
+if [[ "$CDC_CT_MODE" == "BOTH" || "$CDC_CT_MODE" == "CDC" || "$CDC_CT_MODE" == "NONE" ]]; then
+    _pg_set_replica "${DB_SCHEMA}" dtix f full
+    _pg_set_replica "${DB_SCHEMA_SCH}" dtix_sch f full
+    _pg_set_replica "${DB_SCHEMA}" strpk d default
+    _pg_set_replica "${DB_SCHEMA_SCH}" strpk_sch d default
 else
-    if [[ -n $(cat /tmp/psql_stdout_replication_table.$$ | grep "${DB_SCHEMA},dtix,n") ]]; 
-        then echo "table full replica disabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-    else 
-        SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.dtix replica identity nothing;"
-    fi
+    _pg_set_replica "${DB_SCHEMA}" dtix n nothing
+    _pg_set_replica "${DB_SCHEMA_SCH}" dtix_sch n nothing
+    _pg_set_replica "${DB_SCHEMA}" strpk n nothing
+    _pg_set_replica "${DB_SCHEMA_SCH}" strpk_sch n nothing
 fi
 
-# intpk has primary key
-if [[ "$CDC_CT_MODE" == "BOTH" || "$CDC_CT_MODE" == "CT" ]]; then
-    if [[ -n $(cat /tmp/psql_stdout_replication_table.$$ | grep "${DB_SCHEMA},intpk,d" ) ]]; then 
-        echo "table default replica enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-    else 
-        SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.intpk replica identity default;"
-    fi
+if [[ "$CDC_CT_MODE" == "BOTH" || "$CDC_CT_MODE" == "CT" || "$CDC_CT_MODE" == "NONE" ]]; then
+    _pg_set_replica "${DB_SCHEMA}" intpk d default
+    _pg_set_replica "${DB_SCHEMA_SCH}" intpk_sch d default
 else
-    if [[ -n $(cat /tmp/psql_stdout_replication_table.$$ | grep "${DB_SCHEMA},intpk,n") ]]; 
-        then echo "table full replica disabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-    else 
-        SQLCLI </dev/null -c "alter table ${DB_SCHEMA}.intpk replica identity nothing;"
-    fi
+    _pg_set_replica "${DB_SCHEMA}" intpk n nothing
+    _pg_set_replica "${DB_SCHEMA_SCH}" intpk_sch n nothing
 fi
 
 # #############################################################################

@@ -65,9 +65,10 @@ if [[ -z "${DBA_USERNAME}" || -z "$DB_HOST" || "$DB_HOST" == "${DB_BASENAME}" ||
     DB_HOST="${DB_BASENAME}-${CLOUD_DB_SUFFIX}"
 fi
 
-if [[ -z "${DB_CATALOG}" ]]; then
-    DB_CATALOG="$CATALOG_BASENAME"
+if [[ -z "${DB_CATALOG}" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]]; then
+    DB_CATALOG="$DB_SCHEMA"
 fi
+export DB_CATALOG
 
 # #############################################################################
 # create MariaDB RDS instance
@@ -269,22 +270,14 @@ echo -e   "----------------------------\n"
 
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_STDOUT=/tmp/mysql_stdout.$$ DB_STDERR=/tmp/mysql_stderr.$$ DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="mysql" MYSQLCLI -e "SHOW DATABASES;" </dev/null
 
-if [[ -n "$DB_HOST" ]] && [[ -z "${DB_CATALOG}" || "$DB_CATALOG" == "${CATALOG_BASENAME}" ]]; then
-    # use first non-system database if any
-    while read -r db; do
-        case "$db" in information_schema|mysql|performance_schema|sys) continue ;; esac
-        DB_CATALOG="$db"
-        break
-    done < /tmp/mysql_stdout.$$
+if [[ -z "${DB_CATALOG}" || "$DB_CATALOG" == "${CATALOG_BASENAME}" ]]; then
+    DB_CATALOG="${DB_SCHEMA}"
 fi
-
-if [[ -z "${DB_CATALOG}" ]]; then
-    DB_CATALOG="${CATALOG_BASENAME}"
-fi
+export DB_CATALOG
 
 if ! grep -qFx "$DB_CATALOG" /tmp/mysql_stdout.$$ 2>/dev/null; then
     db_to_create="${DB_CATALOG}"
-    DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="mysql" MYSQLCLI -e "CREATE DATABASE IF NOT EXISTS \`${db_to_create}\`;" 
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="mysql" MYSQLCLI -e "CREATE DATABASE IF NOT EXISTS \`${db_to_create}\`;"
 fi
 
 # #############################################################################

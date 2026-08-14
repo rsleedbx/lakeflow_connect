@@ -38,6 +38,25 @@ export CONFIG
 declare -A STATE 
 export STATE
 
+# frequently setup settings
+echo "First is the default
+DATABRICKS_CONFIG_FILE=dogfoodazure|dogfoodaws
+CDC_QBC=cdc|icdc|qbc_fcon|qbc_fc
+GATEWAY_COMPUTE=default|serverless|classic
+INGEST_COMPUTE=default|serverless|classic
+# Source schemas (set from DB_SCHEMA base in 02):
+#   DB_SCHEMA           — per-table SCD (intpk, strpk, dtix)
+#   DB_SCHEMA_SCH=\${DB_SCHEMA}_sch — schema-level ingest (intpk_sch, strpk_sch, dtix_sch)
+TABLE_SCD_TYPE=
+  qbc_fc:intpk=scd_type1
+  qbc_fc:strpk=scd_type2
+  qbc_fc:dtix=append_only
+  qbc_fcon:intpk=scd_type1
+  qbc_fcon:strpk=scd_type1
+  qbc_fcon:dtix=append_only
+"
+
+
 # set tags that will resources remove using cloud scheduler
 if ! declare -p REMOVE_AFTER &> /dev/null; then
     if ! REMOVE_AFTER=$(date --date='+0 day' +%Y-%m-%d 2>/dev/null); then   # blank is do not delete
@@ -97,17 +116,17 @@ fi
 
 # stop after sleep
 if ! declare -p STOP_AFTER_SLEEP &> /dev/null; then
-export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"127m"}      # blank is do not stop
+export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"480m"}      # blank is do not stop
 fi
 
 # delete database after sleep
 if ! declare -p DELETE_DB_AFTER_SLEEP &> /dev/null; then
-export DELETE_DB_AFTER_SLEEP=${DELETE_DB_AFTER_SLEEP:-"131m"}    # blank is do not delete
+export DELETE_DB_AFTER_SLEEP=${DELETE_DB_AFTER_SLEEP:-"480m"}    # blank is do not delete
 fi
 
 # delete lakeflow objects after sleep 
 if ! declare -p DELETE_PIPELINES_AFTER_SLEEP &> /dev/null; then
-export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"137m"}  # blank is do not delete
+export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"480m"}  # blank is do not delete
 fi
 
 # save credentials in secrets so that password reset won't be required
@@ -148,8 +167,10 @@ export USER_PASSWORD=${USER_PASSWORD:-""}
 export CONNECTION_NAME="${CONNECTION_NAME:-""}"
 export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
 
-# pipeline architecture: cdc (gw+ingest) | qbc (query-based) | cdc_single_pipeline
+# pipeline architecture: cdc (gw+ingest) | qbc_fcon (query-based foreign connection) | qbc_fc (query-based foreign catalog) | cdc_single_pipeline
 export CDC_QBC=${CDC_QBC:-"cdc"}
+# Per-mode table SCD/append matrix (tables in DB_SCHEMA): "<cdc|icdc|qbc_fcon|qbc_fc>:<table>=scd_type1|scd_type2|append_only"
+export TABLE_SCD_TYPE="${TABLE_SCD_TYPE:-$'\nqbc_fc:intpk=scd_type1\nqbc_fc:strpk=scd_type2\nqbc_fc:dtix=append_only\nqbc_fcon:intpk=scd_type1\nqbc_fcon:strpk=scd_type1\nqbc_fcon:dtix=append_only\n'}"
 # compute per pipeline: default (let DBX decide) | classic | serverless
 export COMPUTE_GATEWAY=${COMPUTE_GATEWAY:-"default"}
 export COMPUTE_INGEST=${COMPUTE_INGEST:-"default"}
@@ -426,31 +447,6 @@ SQLCMD_DBA() {
 }
 export -f SQLCMD_DBA
 
-SQLCMD_OLD() {
-    local DB_EXIT_ON_ERROR=${DB_EXIT_ON_ERROR:-""}
-    # stdout and stderr file names
-    local DB_OUT_SUFFIX=${DB_OUT_SUFFIX:-""}
-    local DB_STDOUT=${DB_STDOUT:-"/tmp/sqlcmd_stdout${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-    local DB_STDERR=${DB_STDERR:-"/tmp/sqlcmd_stderr${DB_OUT_SUFFIX:+_${DB_OUT_SUFFIX}}.$$"}
-    local RC
-
-    PWMASK="$@"
-    PWMASK="${PWMASK//$DBA_PASSWORD/\$DBA_PASSWORD}"
-    PWMASK="${PWMASK//$USER_PASSWORD/\$USER_PASSWORD}"
-    echo -n sqlcmd "${PWMASK}"
-    if ! [ -t 0 ]; then
-        # echo "redirect stdin"
-        sqlcmd "$@" >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
-    else
-        sqlcmd "$@" >/tmp/sqlcmd_stdout.$$ 2>/tmp/sqlcmd_stderr.$$
-    fi    
-
-    RC=$?
-    RC="$RC" DB_EXIT_ON_ERROR="$DB_EXIT_ON_ERROR" DB_STDOUT="$DB_STDOUT" DB_STDERR="$DB_STDERR" CONT_OR_EXIT
-    return $?
-}  
-export -f SQLCMD 
-
 PSQL() {
     local DB_USERNAME=${DB_USERNAME:-${USER_USERNAME}}
     local DB_PASSWORD=${DB_PASSWORD:-${USER_PASSWORD}}
@@ -651,6 +647,8 @@ export DBA_PASSWORD="${DBA_PASSWORD:-$(pwgen -1y   -r \-\[\]\{\}\!\=\~\^\$\;\(\)
 export USER_PASSWORD="${USER_PASSWORD:-$(pwgen -1y -r \-\[\]\{\}\!\=\~\^\$\;\(\)\:\.\*\@\\\/\<\>\`\"\'\| 32 )}"  # set if not defined
 
 export DB_SCHEMA=${DB_SCHEMA:-${WHOAMI}_lfcddemo}
+# Schema-level demo source (tables intpk_sch/strpk_sch/dtix_sch). Per-table demo uses DB_SCHEMA.
+export DB_SCHEMA_SCH="${DB_SCHEMA_SCH:-${DB_SCHEMA}_sch}"
 export DB_PORT=${DB_PORT:-""}
 export SECRETS_SCOPE=${SECRETS_SCOPE:-${WHOAMI}}
 
@@ -888,7 +886,7 @@ connection_spec_from_json() {
     port: (.port | tostring),
     user: .user,
     password: .password
-  } + if ((.connection_type // .db_type // "SQLSERVER") | ascii_upcase) | IN("SQLSERVER"; "MYSQL") then {trustServerCertificate: "true"} else {} end)
+  } + (if ((.connection_type // .db_type // "SQLSERVER") | ascii_upcase | IN("SQLSERVER", "MYSQL")) then {trustServerCertificate: "true"} else {} end))
 }'
     )
 
@@ -930,13 +928,16 @@ connection_create_or_replace() {
 
     # get the connection name
     local CONNECTION_NAME="$(echo "${OUTPUT[conn_create_json]}" | jq -r '.name')"
+    local CONNECTION_NAME_URI
+    CONNECTION_NAME_URI="$(echo -n "$CONNECTION_NAME" | jq -sRr @uri)"
     OUTPUT[connection_created]=""
 
-    # create or replace
+    # create or replace (patch uses same options as create via conn_patch_json)
     if ! DBX connections get "$CONNECTION_NAME"; then
         DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api post /api/2.1/unity-catalog/connections --json "${OUTPUT[conn_create_json]}"
+        OUTPUT[connection_created]=1
     else 
-        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/connections/"${CONNECTION_NAME}" --json "${OUTPUT[conn_patch_json]}"
+        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/connections/"${CONNECTION_NAME_URI}" --json "${OUTPUT[conn_patch_json]}"
     fi
 
     # save the connection id
@@ -948,6 +949,71 @@ connection_create_or_replace() {
     CONNECTION_NAME="$CONNECTION_NAME" connection_set_all_read 
 }
 export -f connection_create_or_replace
+
+# Create a Lakehouse Federation foreign catalog backed by CONNECTION_NAME.
+# INPUT via env: CONNECTION_NAME, SOURCE_TYPE / CONNECTION_TYPE / DB_TYPE, DB_CATALOG
+# OUTPUT nameref keys: FOREIGN_CATALOG_NAME, foreign_catalog_created
+foreign_catalog_create_or_replace() {
+    local -n OUTPUT="${1}"
+    local FC_NAME="${CONNECTION_NAME}"
+    local CONN_TYPE=""
+    local fc_create_json
+
+    OUTPUT[FOREIGN_CATALOG_NAME]="${FC_NAME}"
+    OUTPUT[foreign_catalog_created]=""
+    export FOREIGN_CATALOG_NAME="${FC_NAME}"
+
+    # Prefer SOURCE_TYPE (demo pipeline), then CONNECTION_TYPE, then DB_TYPE map,
+    # then live UC connection_type (avoids stale MYSQL left in the shell).
+    if [[ -n "${SOURCE_TYPE:-}" ]]; then
+        CONN_TYPE="${SOURCE_TYPE}"
+    elif [[ -n "${CONNECTION_TYPE:-}" ]]; then
+        CONN_TYPE="${CONNECTION_TYPE}"
+    else
+        case "${DB_TYPE:-}" in
+            postgres|postgresql) CONN_TYPE="POSTGRESQL" ;;
+            sqlserver|mssql)     CONN_TYPE="SQLSERVER" ;;
+            mysql|mariadb)       CONN_TYPE="MYSQL" ;;
+        esac
+    fi
+    if [[ -z "${CONN_TYPE}" ]]; then
+        if DBX connections get "${FC_NAME}"; then
+            CONN_TYPE="$(jq -r '.connection_type // empty' /tmp/dbx_stdout.$$)"
+        fi
+    fi
+    CONN_TYPE="$(echo "${CONN_TYPE}" | tr '[:lower:]' '[:upper:]')"
+
+    if [[ "${CONN_TYPE}" == "POSTGRESQL" || "${CONN_TYPE}" == "SQLSERVER" ]]; then
+        if [[ -z "${DB_CATALOG:-}" ]]; then
+            echo "ERROR: foreign catalog for ${CONN_TYPE} requires DB_CATALOG (database option)" >&2
+            return 1
+        fi
+    fi
+
+    fc_create_json="$(
+      CONNECTION_NAME="${CONNECTION_NAME}" \
+      DB_CATALOG="${DB_CATALOG:-}" \
+      CONN_TYPE="${CONN_TYPE}" \
+      jq -n '
+        {
+          name: env.CONNECTION_NAME,
+          connection_name: env.CONNECTION_NAME,
+          catalog_type: "FOREIGN",
+          comment: ("Federated catalog for " + env.CONNECTION_NAME)
+        }
+        | if (env.CONN_TYPE | ascii_upcase | IN("POSTGRESQL", "SQLSERVER")) then
+            . + {options: {database: env.DB_CATALOG}}
+          else .
+          end
+      '
+    )" || return 1
+
+    if ! DBX catalogs get "${FC_NAME}"; then
+        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api post /api/2.1/unity-catalog/catalogs --json "${fc_create_json}"
+        OUTPUT[foreign_catalog_created]=1
+    fi
+}
+export -f foreign_catalog_create_or_replace
 
 
 # make sure executables are there are with correct versions

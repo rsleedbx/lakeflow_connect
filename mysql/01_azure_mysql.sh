@@ -14,6 +14,8 @@ export DB_TYPE=azure-mysql
 export DB_SUFFIX=azure-mysql
 export CONNECTION_TYPE=MYSQL
 export SOURCE_TYPE=$CONNECTION_TYPE
+# Azure Flex major version for create: 5.7 | 8.0 | 8.4 (general_log writable on 5.7; read-only on 8.4)
+export MYSQL_VERSION="${MYSQL_VERSION:-8.4}"
 
 # auto set the connection name
 if [[ "${WHOAMI}" == "lfcddemo" ]] && [[ -z "${CONNECTION_NAME}" || "${CONNECTION_NAME}" != *"-${DB_TYPE}" ]]; then
@@ -124,9 +126,10 @@ if [[ -z "${DBA_USERNAME}" || -z "$DB_HOST" || "$DB_HOST" != *"-${DB_SUFFIX}" ]]
     DB_HOST="${DB_BASENAME}-${DB_SUFFIX}"; 
 fi  
 
-if [[ -z "${DB_CATALOG}" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]]; then 
-    DB_CATALOG="${CATALOG_BASENAME}"
-fi  
+if [[ -z "${DB_CATALOG}" || "$DB_CATALOG" == "$CATALOG_BASENAME" ]]; then
+    DB_CATALOG="${DB_SCHEMA}"
+fi
+export DB_CATALOG
 
 export DB_PORT=3306
 
@@ -152,7 +155,7 @@ if ! CMD az mysql flexible-server show -n "${DB_HOST}" -g "${RG_NAME}"; then
     if ! CMD az mysql flexible-server create -n "${DB_HOST}" -g "${RG_NAME}" \
         --tags "Owner=${DBX_USERNAME}" "${REMOVE_AFTER:+RemoveAfter=${REMOVE_AFTER}}" \
         --database-name "${DB_SCHEMA}" \
-        --version 8.4 \
+        --version "${MYSQL_VERSION}" \
         --public-access Enabled \
         --storage-size 32 \
         --tier Burstable \
@@ -236,53 +239,87 @@ fi
 echo -e "\nEnable binlog_row_image=full, binlog_format=row and require_secure_transport=off" 
 echo -e   "--------------------------------------------------------------------------------\n"
 
-PARAMETER_SET=""
+_parm_args=()
 CMD_EXIT_ON_ERROR=PRINT_EXIT
 cmd_mask_azure_secrets
 CMD_STDOUT=/tmp/az_parm_list.$$ CMD az mysql flexible-server parameter list --server-name "$DB_HOST"
 
-# lakeflow connect 
+# lakeflow connect
 if [[ "on" == "$(jq -r '.[] | select(.name == "sql_generate_invisible_primary_key") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    CMD_EXIT_ON_ERROR=PRINT_EXIT
-    cmd_mask_azure_secrets
-    CMD az mysql flexible-server parameter set --server-name "$DB_HOST" --name  sql_generate_invisible_primary_key --value OFF
-    PARAMETER_SET="1"
+    _parm_args+=("sql_generate_invisible_primary_key=OFF")
 fi
 
 if [[ "full" != "$(jq -r '.[] | select(.name == "binlog_row_image") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    CMD_EXIT_ON_ERROR=PRINT_EXIT
-    cmd_mask_azure_secrets
-    CMD az mysql flexible-server parameter set --server-name "$DB_HOST" --name  binlog_row_image --value full
-    PARAMETER_SET="1"
+    _parm_args+=("binlog_row_image=full")
 fi
 
 if [[ "row" != "$(jq -r '.[] | select(.name == "binlog_format") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    CMD_EXIT_ON_ERROR=PRINT_EXIT
-    cmd_mask_azure_secrets
-    CMD az mysql flexible-server parameter set --server-name "$DB_HOST" --name  binlog_format --value row
-    PARAMETER_SET="1"
+    _parm_args+=("binlog_format=row")
 fi
 
 # lakeflow connect expects ssl disabled for now
 if [[ "off" != "$(jq -r '.[] | select(.name == "require_secure_transport") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    CMD_EXIT_ON_ERROR=PRINT_EXIT
-    cmd_mask_azure_secrets
-    CMD az mysql flexible-server parameter set --server-name "$DB_HOST" --name  require_secure_transport --value off
-    PARAMETER_SET="1"
+    _parm_args+=("require_secure_transport=off")
 fi
 
 if [[ 604800 -gt "$(jq -r '.[] | select(.name == "binlog_expire_logs_seconds") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
-    CMD_EXIT_ON_ERROR=PRINT_EXIT
-    cmd_mask_azure_secrets
-    CMD az mysql flexible-server parameter set --server-name "$DB_HOST" --name  binlog_expire_logs_seconds --value 604800
-    PARAMETER_SET="1"
+    _parm_args+=("binlog_expire_logs_seconds=604800")
 fi
 
-# restart to take effect
-if [[ "$PARAMETER_SET" == "1" ]]; then 
+# Azure Flex: log_output is FILE|NONE only (not TABLE / mysql.general_log).
+if [[ "file" != "$(jq -r '.[] | select(.name == "log_output") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
+    _parm_args+=("log_output=FILE")
+fi
+_general_ro="$(jq -r '.[] | select(.name == "general_log") | .isReadOnly | ascii_downcase' /tmp/az_parm_list.$$)"
+if [[ "${_general_ro}" != "true" ]] \
+   && [[ "on" != "$(jq -r '.[] | select(.name == "general_log") | .currentValue | ascii_downcase' /tmp/az_parm_list.$$)" ]]; then
+    _parm_args+=("general_log=ON")
+elif [[ "${_general_ro}" == "true" ]]; then
+    echo "general_log is read-only on this server version (e.g. 8.4); skipping. Use MYSQL_VERSION=5.7 on a new server if needed."
+fi
+
+if [[ "${#_parm_args[@]}" -gt 0 ]]; then
     CMD_EXIT_ON_ERROR=PRINT_EXIT
     cmd_mask_azure_secrets
-    CMD az mysql flexible-server restart --name "$DB_HOST"
+    CMD az mysql flexible-server parameter set-batch \
+      --server-name "$DB_HOST" \
+      --resource-group "$RG_NAME" \
+      --source "user-override" \
+      --args "${_parm_args[@]}"
+
+    # Restart only when Azure marks a changed param as pending restart or non-dynamic.
+    CMD_EXIT_ON_ERROR=PRINT_EXIT
+    cmd_mask_azure_secrets
+    CMD_STDOUT=/tmp/az_parm_list.$$ CMD az mysql flexible-server parameter list --server-name "$DB_HOST"
+
+    _need_restart=0
+    for _arg in "${_parm_args[@]}"; do
+        _pname="${_arg%%=*}"
+        _pending="$(jq -r --arg n "$_pname" \
+          '.[] | select(.name==$n) | .isConfigPendingRestart // empty' /tmp/az_parm_list.$$ \
+          | tr '[:upper:]' '[:lower:]')"
+        _dynamic="$(jq -r --arg n "$_pname" \
+          '.[] | select(.name==$n) | .isDynamicConfig // empty' /tmp/az_parm_list.$$ \
+          | tr '[:upper:]' '[:lower:]')"
+        if [[ "$_pending" == "true" || "$_dynamic" == "false" ]]; then
+            _need_restart=1
+            echo "Parameter ${_pname} requires restart (isConfigPendingRestart=${_pending:-n/a} isDynamicConfig=${_dynamic:-n/a})"
+            break
+        fi
+        if [[ -z "$_pending" && -z "$_dynamic" ]]; then
+            _need_restart=1
+            echo "Parameter ${_pname} has no restart metadata; restarting to be safe"
+            break
+        fi
+    done
+
+    if [[ "${_need_restart}" -eq 1 ]]; then
+        CMD_EXIT_ON_ERROR=PRINT_EXIT
+        cmd_mask_azure_secrets
+        CMD az mysql flexible-server restart --name "$DB_HOST"
+    else
+        echo "All changed parameters are dynamic / not pending restart; skipping server restart"
+    fi
 fi
 
 # #############################################################################
@@ -305,3 +342,8 @@ CMD_EXIT_ON_ERROR=
 cmd_mask_azure_secrets
 CMD az resource list --query "[?resourceGroup=='$RG_NAME'].{ name: name, flavor: kind, resourceType: type, region: location }" --output table
 cat /tmp/az_stdout.$$
+
+echo -e "\nServer logs (FILE; not mysql.general_log)"
+echo -e   "----------------------------------------\n"
+echo "  az mysql flexible-server server-logs list -g ${RG_NAME} -s ${DB_HOST} -o table"
+echo "  az mysql flexible-server server-logs download -g ${RG_NAME} -s ${DB_HOST} -n <logfile>"

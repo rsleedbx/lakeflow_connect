@@ -21,13 +21,17 @@ if [[ "$INITIAL_SNAPSHOT_ROWS" -eq 0 ]] && [[ "${DB_SCHEMA}" != *"_${INITIAL_SNA
     echo "Changing schema to $DB_SCHEMA"
 fi
 
+export DB_SCHEMA
+export DB_SCHEMA_SCH="${DB_SCHEMA}_sch"
+echo "Demo schemas: DB_SCHEMA=${DB_SCHEMA} (per-table) DB_SCHEMA_SCH=${DB_SCHEMA_SCH} (*_sch tables)"
+
 # #############################################################################
 # dml generator for mysql
 
 # make sure to quote echo "$sql_dml_generator" otherwise the newline will be removed 
 if ! declare -p sql_dml_generator &> /dev/null; then
 echo "using default sql_dml_generator.  echo \"\$sql_dml_generator\" to view" 
-    sql_dml_generator="call $DB_SCHEMA.endless_dml_loop(NULL, NULL);"
+    sql_dml_generator="call ${DB_SCHEMA}.endless_dml_loop(NULL, NULL);"
 fi
 
 # #############################################################################
@@ -78,31 +82,64 @@ export -f db_replication_cleanup
 
 # #############################################################################
 
-# create schema
+# create schemas: DB_SCHEMA (per-table) + DB_SCHEMA_SCH (schema-level, *_sch tables)
 
-echo -e "Creating schema\n"
+echo -e "Creating schemas ${DB_SCHEMA} and ${DB_SCHEMA_SCH}\n"
 
-DB_CATALOG="mysql" SQLCLI -e "create schema if not exists ${DB_SCHEMA}" </dev/null
-# /tmp/mysql_stdout.$$ will be 0 if schema was created.  drop the schema when done
+for _demo_schema in "${DB_SCHEMA}" "${DB_SCHEMA_SCH}"; do
+DB_CATALOG="mysql" SQLCLI -e "create schema if not exists ${_demo_schema}" </dev/null
 
 if [[ ! -s /tmp/mysql_stderr.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
+    if [[ "${_demo_schema}" == "${DB_SCHEMA_SCH}" ]]; then
+      _sfx="_sch"
+    else
+      _sfx=""
+    fi
+    _drop_tables="drop table if exists ${_demo_schema}.intpk${_sfx};
+    drop table if exists ${_demo_schema}.strpk${_sfx};
+    drop table if exists ${_demo_schema}.dtix${_sfx};"
     nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DB_STDOUT=~/nohup.out DB_STDERR=~/nohup.out DB_CATALOG="mysql" SQLCLI >>~/nohup.out 2>&1 << EOF &
-    drop table if exists ${DB_SCHEMA}.intpk; 
-    drop table if exists ${DB_SCHEMA}.dtix; 
-    drop schema if exists ${DB_SCHEMA};
+    ${_drop_tables}
+    drop schema if exists ${_demo_schema};
 EOF
-    echo -e "\nDeleting ${DB_SCHEMA} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n" 
+    echo -e "\nDeleting ${_demo_schema} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n"
 fi
+done
 
 # #############################################################################
-# create user in the catalog
+# DML store proc: one WHILE; each iteration hits DB_SCHEMA + DB_SCHEMA_SCH
 
 echo -e "Creating DML store proc\n"
 
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_SCHEMA" SQLCLI_DBA -e 'DROP PROCEDURE IF EXISTS endless_dml_loop' </dev/null
+_sql_dml_body=""
+for _sfx in "" "_sch"; do
+  if [[ -z "${_sfx}" ]]; then
+    _schema="${DB_SCHEMA}"
+  else
+    _schema="${DB_SCHEMA_SCH}"
+  fi
+  _sql_dml_body+="
+        INSERT INTO ${_schema}.intpk${_sfx} (dt) VALUES (CURRENT_TIMESTAMP()), (CURRENT_TIMESTAMP()), (CURRENT_TIMESTAMP());
+        COMMIT;
+        DELETE FROM ${_schema}.intpk${_sfx} WHERE pk = (SELECT min_pk FROM (SELECT MIN(pk) AS min_pk FROM ${_schema}.intpk${_sfx}) AS temp);
+        COMMIT;
+        UPDATE ${_schema}.intpk${_sfx} SET dt = CURRENT_TIMESTAMP() WHERE pk = (SELECT min_pk FROM (SELECT MIN(pk) AS min_pk FROM ${_schema}.intpk${_sfx}) AS temp);
+        COMMIT;
+        INSERT INTO ${_schema}.strpk${_sfx} (dt) VALUES (CURRENT_TIMESTAMP()), (CURRENT_TIMESTAMP()), (CURRENT_TIMESTAMP());
+        COMMIT;
+        DELETE FROM ${_schema}.strpk${_sfx} WHERE pk = (SELECT min_pk FROM (SELECT MIN(pk) AS min_pk FROM ${_schema}.strpk${_sfx}) AS temp);
+        COMMIT;
+        UPDATE ${_schema}.strpk${_sfx} SET dt = CURRENT_TIMESTAMP() WHERE pk = (SELECT min_pk FROM (SELECT MIN(pk) AS min_pk FROM ${_schema}.strpk${_sfx}) AS temp);
+        COMMIT;
+        INSERT INTO ${_schema}.dtix${_sfx} (pk,dt) VALUES (1,CURRENT_TIMESTAMP()), (2,CURRENT_TIMESTAMP()), (3,CURRENT_TIMESTAMP());
+        COMMIT;"
+done
 
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_SCHEMA" SQLCLI_DBA <<'EOF'
-DELIMITER $$
+# Drop leftover proc from prior dual-proc layout
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="${DB_SCHEMA_SCH}" SQLCLI_DBA -e 'DROP PROCEDURE IF EXISTS endless_dml_loop' </dev/null
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="${DB_SCHEMA}" SQLCLI_DBA -e 'DROP PROCEDURE IF EXISTS endless_dml_loop' </dev/null
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="${DB_SCHEMA}" SQLCLI_DBA <<EOF
+DELIMITER \$\$
 
 CREATE PROCEDURE endless_dml_loop(
     IN dml_interval_sec INT,
@@ -112,32 +149,17 @@ BEGIN
     DECLARE counter INT DEFAULT 0;
     DECLARE sleep_interval INT DEFAULT COALESCE(dml_interval_sec, 60);
     DECLARE stop_after INT DEFAULT COALESCE(max_iterations, 30);
-    
-    WHILE counter < stop_after DO
-        -- intpk
-        INSERT INTO intpk (dt) VALUES (CURRENT_TIMESTAMP()), (CURRENT_TIMESTAMP()), (CURRENT_TIMESTAMP());
-        COMMIT;
-        
-        DELETE FROM intpk WHERE pk = (SELECT min_pk FROM (SELECT MIN(pk) AS min_pk FROM intpk) AS temp);
-        COMMIT;
-        
-        UPDATE intpk SET dt = CURRENT_TIMESTAMP() WHERE pk = (SELECT min_pk FROM (SELECT MIN(pk) AS min_pk FROM intpk) AS temp);
-        COMMIT;
-        
-        -- dtix
-        INSERT INTO dtix (pk,dt) VALUES (1,CURRENT_TIMESTAMP()), (2,CURRENT_TIMESTAMP()), (3,CURRENT_TIMESTAMP());
-        COMMIT;
 
+    WHILE counter < stop_after DO
+${_sql_dml_body}
         SELECT CONCAT('Counter ', counter, ' of ', stop_after, ' (sleeping ', sleep_interval, 's)') AS notice;
         SET counter = counter + 1;
         DO SLEEP(sleep_interval);
     END WHILE;
-    
     SELECT CONCAT('Completed ', counter, ' iterations') AS final_notice;
 END;
 EOF
-
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_SCHEMA" SQLCLI_DBA <<EOF
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="${DB_SCHEMA}" SQLCLI_DBA <<EOF
 GRANT EXECUTE ON PROCEDURE endless_dml_loop TO ${USER_USERNAME};
 EOF
 
@@ -145,66 +167,71 @@ EOF
 
 # create tables
 
-echo -e "Creating tables\n"
+echo -e "Creating tables in ${DB_SCHEMA} and ${DB_SCHEMA_SCH}\n"
 
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="${DB_SCHEMA}" SQLCLI <<EOF
-    create table if not exists ${DB_SCHEMA}.intpk (
-        pk serial primary key, 
-        dt timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, 
+# Recreate strpk* so UUID default applies (IF NOT EXISTS would keep old DDL)
+for _sfx in "" "_sch"; do
+  if [[ -z "${_sfx}" ]]; then
+    _schema="${DB_SCHEMA}"
+  else
+    _schema="${DB_SCHEMA_SCH}"
+  fi
+
+  DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="${_schema}" SQLCLI <<EOF
+    drop table if exists ${_schema}.strpk${_sfx};
+    create table if not exists ${_schema}.intpk${_sfx} (
+        pk serial primary key,
+        dt timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         ops varchar(255) default 'insert');
-    create table if not exists ${DB_SCHEMA}.dtix (
-        pk bigint, 
-        dt timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, 
+    create table ${_schema}.strpk${_sfx} (
+        pk varchar(64) primary key default (uuid()),
+        dt timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        ops varchar(255) default 'insert');
+    create table if not exists ${_schema}.dtix${_sfx} (
+        pk bigint,
+        dt timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         ops varchar(255) default 'insert');
 EOF
 
-if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
-DB_CATALOG="${DB_SCHEMA}" SQLCLI <<EOF
-    insert into ${DB_SCHEMA}.intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
-    insert into ${DB_SCHEMA}.dtix (pk,dt) values (1,CURRENT_TIMESTAMP),(2,CURRENT_TIMESTAMP),(3,CURRENT_TIMESTAMP);
-    select concat('${DB_SCHEMA}.intpk,', max(pk)) from ${DB_SCHEMA}.intpk;
-    select concat('${DB_SCHEMA}.dtix,', max(dt)) from ${DB_SCHEMA}.dtix limit 1;    
+  if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
+    DB_CATALOG="${_schema}" SQLCLI <<EOF
+    insert into ${_schema}.intpk${_sfx} (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
+    insert into ${_schema}.strpk${_sfx} (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
+    insert into ${_schema}.dtix${_sfx} (pk,dt) values (1,CURRENT_TIMESTAMP),(2,CURRENT_TIMESTAMP),(3,CURRENT_TIMESTAMP);
+    select concat('${_schema}.intpk${_sfx},', max(pk)) from ${_schema}.intpk${_sfx};
+    select concat('${_schema}.strpk${_sfx},', max(pk)) from ${_schema}.strpk${_sfx};
+    select concat('${_schema}.dtix${_sfx},', max(dt)) from ${_schema}.dtix${_sfx} limit 1;
 EOF
-
-# .\+ = one or more so that nulls are not accepted
-if grep "^${DB_SCHEMA}.intpk,.\+$" /tmp/mysql_stdout.$$; then echo "table intpk ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$
-    return 1
-fi
-
-# .\+ = one or more so that nulls are not accepted
-if grep "^${DB_SCHEMA}.dtix,.\+$" /tmp/mysql_stdout.$$ ; then echo "table dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$
-    return 1
-fi
-fi
+    if grep "^${_schema}.intpk${_sfx},.\+$" /tmp/mysql_stdout.$$; then echo "table intpk${_sfx} ok ${_schema}"; else cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$; return 1; fi
+    if grep "^${_schema}.strpk${_sfx},.\+$" /tmp/mysql_stdout.$$; then echo "table strpk${_sfx} ok ${_schema}"; else cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$; return 1; fi
+    if grep "^${_schema}.dtix${_sfx},.\+$" /tmp/mysql_stdout.$$; then echo "table dtix${_sfx} ok ${_schema}"; else cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$; return 1; fi
+  fi
+done
 
 # #############################################################################
 # Install Lakeflow MySQL utility objects + CDC grants (after tables exist)
-# Docs: https://docs.databricks.com/aws/en/ingestion/lakeflow-connect/mysql-utility-script
-# Skip lakeflow_cdc_setup on Azure — binlog is set via server parameters in 01.
 
 echo -e "\nInstalling MySQL utility objects + CDC grants (latest registered)"
 echo -e   "----------------------------------------------------------------\n"
 
-DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_SCHEMA}" \
+for _demo_schema in "${DB_SCHEMA}" "${DB_SCHEMA_SCH}"; do
+DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${_demo_schema}" \
   python3 "${_LFC_REPO_ROOT}/utils/mysql-utility-script.py" \
     --apply \
     --user "${USER_USERNAME}" \
-    --tables "\`${DB_SCHEMA}\`.*" || return 1
+    --tables "\`${_demo_schema}\`.*" || return 1
 
-# Verify utility procedures installed in DB_SCHEMA
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="${DB_SCHEMA}" SQLCLI_DBA -e \
-  "SELECT ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='${DB_SCHEMA}' AND ROUTINE_TYPE='PROCEDURE' AND ROUTINE_NAME IN ('lakeflow_cdc_setup','lakeflow_setup_cdc_user') ORDER BY ROUTINE_NAME;" \
+DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="${_demo_schema}" SQLCLI_DBA -e \
+  "SELECT ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='${_demo_schema}' AND ROUTINE_TYPE='PROCEDURE' AND ROUTINE_NAME IN ('lakeflow_cdc_setup','lakeflow_setup_cdc_user') ORDER BY ROUTINE_NAME;" \
   </dev/null
 if ! grep -q "lakeflow_cdc_setup" /tmp/mysql_stdout.$$ || ! grep -q "lakeflow_setup_cdc_user" /tmp/mysql_stdout.$$; then
-    echo "ERROR: lakeflow utility procedures not found in schema ${DB_SCHEMA}" >&2
+    echo "ERROR: lakeflow utility procedures not found in schema ${_demo_schema}" >&2
     cat /tmp/mysql_stdout.$$ /tmp/mysql_stderr.$$
     return 1
 fi
-echo "utility procedures ok: lakeflow_cdc_setup, lakeflow_setup_cdc_user"
+echo "utility procedures ok in ${_demo_schema}: lakeflow_cdc_setup, lakeflow_setup_cdc_user"
+done
 
-# Verify CDC user grants (replication + select)
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="mysql" SQLCLI_DBA -e \
   "SHOW GRANTS FOR '${USER_USERNAME}'@'%';" </dev/null
 if ! grep -qi "REPLICATION" /tmp/mysql_stdout.$$; then

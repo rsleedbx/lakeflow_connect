@@ -33,19 +33,20 @@ fi
 export DATABRICKS_HOST_NAME
 # used for connection
 if [[ -z "$CONNECTION_NAME" ]]; then 
-    CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr [.@] _)
+    CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr '.@-' '_')
 fi
 export CONNECTION_NAME
 # long name
 #export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE:+${GATEWAY_DRIVER_NODE}GDN_}${GATEWAY_WORKER_NODE:+${GATEWAY_WORKER_NODE}GWN_}${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_GW
 #export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE:+${GATEWAY_DRIVER_NODE}GDN_}${GATEWAY_WORKER_NODE:+${GATEWAY_WORKER_NODE}GWN_}${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_IG
-# short name with pipeline type + compute: e.g. ..._cdc_default_GW / ..._qbc_srvless_IG
+# short name with pipeline type + compute: e.g. ..._cdc_default_GW / ..._qbc_fcon_srvless_IG
 case "${CDC_QBC}" in
     "cdc") PIPELINE_TYPE_TAG="cdc" ;;
-    "qbc") PIPELINE_TYPE_TAG="qbc" ;;
+    "qbc_fcon") PIPELINE_TYPE_TAG="qbc_fcon" ;;
+    "qbc_fc") PIPELINE_TYPE_TAG="qbc_fc" ;;
     "cdc_single_pipeline"|"icdc") PIPELINE_TYPE_TAG="icdc" ;;
     *)
-        echo "CDC_QBC=${CDC_QBC} must be cdc|qbc|cdc_single_pipeline" >&2
+        echo "CDC_QBC=${CDC_QBC} must be cdc|qbc_fcon|qbc_fc|cdc_single_pipeline" >&2
         kill -INT $$
     ;;
 esac
@@ -75,10 +76,16 @@ if [[ -z "${ELOG_CATALOG:-}" ]]; then
 fi
 export ELOG_CATALOG
 export ELOG_SCHEMA=${ELOG_SCHEMA:-${WHOAMI}}
+# Schema-level source (may already be set by 02_*); per-table uses DB_SCHEMA
+export DB_SCHEMA_SCH="${DB_SCHEMA_SCH:-${DB_SCHEMA}_sch}"
 # check access to SQL Server
 
 function cleanup() {
     if [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
+        if [[ -n "${STATE[foreign_catalog_created]:-}" ]]; then
+            CLEANUP nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DBX catalogs delete "${FOREIGN_CATALOG_NAME:-$CONNECTION_NAME}" >> ~/nohup.out 2>&1 &
+            CLEANUP echo -e "\nDeleting foreign catalog ${FOREIGN_CATALOG_NAME:-$CONNECTION_NAME} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n"
+        fi
         CLEANUP nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
         CLEANUP echo -e "\nDeleting connection ${CONNECTION_NAME} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
     fi
@@ -122,24 +129,18 @@ fi
 echo -e "\nCreate Connection"
 echo -e    "----------------\n"
 
-# create connection and delete or update
-# specs are here ${STATE[conn_create_json]} ${STATE[conn_patch_json]}
+# specs: STATE[conn_create_json] / STATE[conn_patch_json] (same options; patch omits connection_type)
 connection_spec_from_env STATE
+connection_create_or_replace STATE
+# CONNECTION_ID and STATE[connection_created] set by connection_create_or_replace
 
-STATE[connection_created]=""
-if ! DBX connections get "$CONNECTION_NAME"; then
-    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX connections create --json "${STATE[conn_create_json]}"
-    STATE[connection_created]=1
-else
-    # connections update does not update comments
-    #DB_EXIT_ON_ERROR="PRINT_EXIT" DBX api patch /api/2.1/unity-catalog/connections/$(echo -n "$CONNECTION_NAME" | jq -sRr @uri) --json "${STATE[conn_patch_json]}"
-    DB_EXIT_ON_ERROR="PRINT_EXIT" DBX connections update $(echo -n "$CONNECTION_NAME" | jq -sRr @uri) --json "${STATE[conn_patch_json]}"
+if [[ "${CDC_QBC}" == "qbc_fc" ]]; then
+    echo -e "\nCreate Foreign Catalog"
+    echo -e   "----------------------\n"
+    foreign_catalog_create_or_replace STATE
+    export FOREIGN_CATALOG_NAME="${STATE[FOREIGN_CATALOG_NAME]}"
+    echo -e "Foreign catalog: ${DATABRICKS_HOST_NAME}/explore/data/${FOREIGN_CATALOG_NAME}\n"
 fi
-
-# sometime in 2026, connection_name is used and not connection_id
-CONNECTION_ID=$(jq -r '.connection_id' /tmp/dbx_stdout.$$)
-STATE[CONNECTION_ID]="${CONNECTION_ID}"
-export CONNECTION_ID
 
 # #############################################################################
 
@@ -201,7 +202,7 @@ gw_spec="$(jq -n '
 GATEWAY_EVENT_LOG="event_log_${GATEWAY_PIPELINE_NAME}"
 
 # Only the "cdc" architecture uses a separate gateway pipeline.
-# "qbc" and "cdc_single_pipeline" ingest directly from the connection.
+# "qbc_fcon" and "cdc_single_pipeline" ingest directly from the connection.
 if [[ "$CDC_QBC" == "cdc" ]]; then
     DB_EXIT_ON_ERROR="PRINT_EXIT"  DBX pipelines create --json "$gw_spec"
 
@@ -231,16 +232,114 @@ echo -e   "-------------------------\n"
 
 export SCD_TYPE="${SCD_TYPE:-}"
 export INGESTION_PIPELINE_ID="${INGESTION_PIPELINE_ID:-}"
-export SOURCE_TYPE DB_CATALOG DB_SCHEMA TARGET_CATALOG TARGET_SCHEMA
+export SOURCE_TYPE DB_CATALOG DB_SCHEMA DB_SCHEMA_SCH
+export TARGET_CATALOG TARGET_SCHEMA
 export INGESTION_PIPELINE_NAME INGESTION_PIPELINE_CONTINUOUS PIPELINE_DEV_MODE
 export COMPUTE_INGEST CONNECTION_NAME CDC_QBC CDC_CT_MODE
 export GATEWAY_PIPELINE_ID PUBLISH_EVENT_LOG ELOG_CATALOG ELOG_SCHEMA
 export PG_PRECREATE_SLOT_PUB="${PG_PRECREATE_SLOT_PUB:-1}"
+export FOREIGN_CATALOG_NAME="${FOREIGN_CATALOG_NAME:-${CONNECTION_NAME}}"
+
+export TABLE_SCD_TYPE="${TABLE_SCD_TYPE:-$'\nqbc_fc:intpk=scd_type1\nqbc_fc:strpk=scd_type2\nqbc_fc:dtix=append_only\nqbc_fcon:intpk=scd_type1\nqbc_fcon:strpk=scd_type1\nqbc_fcon:dtix=append_only\n'}"
+
+# Parse TABLE_SCD_TYPE lines for a mode prefix into JSON: [{"table":"...","mode":"..."}, ...]
+table_scd_entries_json() {
+    local want_prefix="$1"
+    local line prefix rest table mode
+    local -a entries=()
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # trim leading/trailing whitespace
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        [[ "$line" != *:* || "$line" != *=* ]] && continue
+        prefix="${line%%:*}"
+        rest="${line#*:}"
+        [[ "$prefix" != "$want_prefix" ]] && continue
+        table="${rest%%=*}"
+        mode="${rest#*=}"
+        table="${table#"${table%%[![:space:]]*}"}"
+        table="${table%"${table##*[![:space:]]}"}"
+        mode="${mode#"${mode%%[![:space:]]*}"}"
+        mode="${mode%"${mode##*[![:space:]]}"}"
+        entries+=("$(jq -nc --arg t "$table" --arg m "$mode" '{table:$t,mode:$m}')")
+    done <<< "${TABLE_SCD_TYPE}"
+    if ((${#entries[@]})); then
+        printf '%s\n' "${entries[@]}" | jq -s '.'
+    else
+        echo '[]'
+    fi
+}
+
+# TABLE_SCD_TYPE prefixes: qbc_fc / qbc_fcon / cdc / icdc (icdc aliases cdc_single_pipeline)
+case "${CDC_QBC}" in
+    qbc_fc) _TABLE_SCD_PREFIX="qbc_fc" ;;
+    qbc_fcon) _TABLE_SCD_PREFIX="qbc_fcon" ;;
+    cdc) _TABLE_SCD_PREFIX="cdc" ;;
+    cdc_single_pipeline|icdc) _TABLE_SCD_PREFIX="icdc" ;;
+    *) _TABLE_SCD_PREFIX="${CDC_QBC}" ;;
+esac
+TABLE_SCD_ENTRIES_JSON="$(table_scd_entries_json "${_TABLE_SCD_PREFIX}")"
+# Fall back: icdc → cdc entries if no icdc: lines
+if [[ "${_TABLE_SCD_PREFIX}" == "icdc" ]] && [[ "${TABLE_SCD_ENTRIES_JSON}" == "[]" ]]; then
+    TABLE_SCD_ENTRIES_JSON="$(table_scd_entries_json cdc)"
+fi
+export TABLE_SCD_ENTRIES_JSON
+# qbc_fc table mode defaults from TABLE_SCD_TYPE qbc_fc: lines (env default)
+QBC_FC_TABLE_SCD_JSON="$(table_scd_entries_json qbc_fc)"
+[[ "${QBC_FC_TABLE_SCD_JSON}" == "[]" ]] && QBC_FC_TABLE_SCD_JSON='[{"table":"intpk","mode":"scd_type1"},{"table":"strpk","mode":"scd_type2"},{"table":"dtix","mode":"append_only"}]'
+export QBC_FC_TABLE_SCD_JSON
+# qbc_fcon: qbc_fcon: entries or default intpk+strpk SCD_TYPE_1 + dtix append_only
+QBC_FCON_TABLE_SCD_JSON="$(table_scd_entries_json qbc_fcon)"
+[[ "${QBC_FCON_TABLE_SCD_JSON}" == "[]" ]] && QBC_FCON_TABLE_SCD_JSON='[{"table":"intpk","mode":"scd_type1"},{"table":"strpk","mode":"scd_type1"},{"table":"dtix","mode":"append_only"}]'
+export QBC_FCON_TABLE_SCD_JSON
 
 # Shared cdc / cdc_single_pipeline (icdc) ingestion spec.
-# Differs mainly by gateway_id vs connection_name (+ MANAGED_INGESTION extras for icdc).
-# Objects from CDC_CT_MODE: CT=intpk, CDC=dtix, BOTH=intpk+dtix, NONE=schema.
+# Objects from CDC_CT_MODE: CT=intpk, CDC=dtix+strpk, BOTH=intpk+dtix+strpk (from DB_SCHEMA);
+# NONE=schema-level from DB_SCHEMA_SCH (*_sch tables).
+# When TABLE_SCD_TYPE has cdc:/icdc: entries, apply scd/cursor config to matching tables.
 ig_cdc_spec="$(jq -n '
+  def table_cfg(mode):
+    if mode == "scd_type1" then
+      {scd_type: "SCD_TYPE_1", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
+    elif mode == "scd_type2" then
+      {scd_type: "SCD_TYPE_2", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
+    elif mode == "append_only" then
+      {scd_type: "APPEND_ONLY", query_based_connector_config: {cursor_columns: ["dt"]}}
+    else
+      {}
+    end;
+  def bare_table(name):
+    {
+      table: (
+        {
+          source_schema: env.DB_SCHEMA,
+          source_table: name,
+          destination_catalog: env.TARGET_CATALOG,
+          destination_schema: env.TARGET_SCHEMA
+        }
+        | (if env.SOURCE_TYPE != "MYSQL" then . + {source_catalog: env.DB_CATALOG} else . end)
+      )
+    };
+  def configured_table(name; mode):
+    {
+      table: (
+        {
+          source_schema: env.DB_SCHEMA,
+          source_table: name,
+          destination_catalog: env.TARGET_CATALOG,
+          destination_schema: env.TARGET_SCHEMA,
+          table_configuration: table_cfg(mode)
+        }
+        | (if env.SOURCE_TYPE != "MYSQL" then . + {source_catalog: env.DB_CATALOG} else . end)
+      )
+    };
+  def scd_mode_for(name):
+    (env.TABLE_SCD_ENTRIES_JSON | fromjson) as $entries
+    | ($entries | map(select(.table == name)) | .[0].mode // "");
+  def maybe_table(name):
+    (scd_mode_for(name)) as $m
+    | if $m != "" then configured_table(name; $m) else bare_table(name) end;
   {
     name: env.INGESTION_PIPELINE_NAME,
     continuous: env.INGESTION_PIPELINE_CONTINUOUS,
@@ -255,7 +354,7 @@ ig_cdc_spec="$(jq -n '
             {
               schema: (
                 {
-                  source_schema: env.DB_SCHEMA,
+                  source_schema: env.DB_SCHEMA_SCH,
                   destination_catalog: env.TARGET_CATALOG,
                   destination_schema: env.TARGET_SCHEMA,
                   table_configuration: (
@@ -268,34 +367,10 @@ ig_cdc_spec="$(jq -n '
           ]
         else
           (if (env.CDC_CT_MODE == "CT" or env.CDC_CT_MODE == "BOTH") then
-             [
-               {
-                 table: (
-                   {
-                     source_schema: env.DB_SCHEMA,
-                     source_table: "intpk",
-                     destination_catalog: env.TARGET_CATALOG,
-                     destination_schema: env.TARGET_SCHEMA
-                   }
-                   | (if env.SOURCE_TYPE != "MYSQL" then . + {source_catalog: env.DB_CATALOG} else . end)
-                 )
-               }
-             ]
+             [maybe_table("intpk")]
            else [] end)
           + (if (env.CDC_CT_MODE == "CDC" or env.CDC_CT_MODE == "BOTH") then
-             [
-               {
-                 table: (
-                   {
-                     source_schema: env.DB_SCHEMA,
-                     source_table: "dtix",
-                     destination_catalog: env.TARGET_CATALOG,
-                     destination_schema: env.TARGET_SCHEMA
-                   }
-                   | (if env.SOURCE_TYPE != "MYSQL" then . + {source_catalog: env.DB_CATALOG} else . end)
-                 )
-               }
-             ]
+             [maybe_table("dtix"), maybe_table("strpk")]
            else [] end)
         end
       )
@@ -345,9 +420,18 @@ ig_cdc_spec="$(jq -n '
      else . end)
 ')"
 
-# qbc: query-based ingestion. Requires a primary key, so intpk only.
-# Direct from connection (no gateway); continuous is not supported for qbc.
-ig_qbc_spec="$(jq -n '
+# qbc_fcon: query-based ingestion from DB_SCHEMA. Tables from TABLE_SCD_TYPE qbc_fcon: entries (default intpk+strpk+dtix).
+ig_qbc_fcon_spec="$(jq -n '
+  def table_cfg(mode):
+    if mode == "scd_type1" then
+      {scd_type: "SCD_TYPE_1", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
+    elif mode == "scd_type2" then
+      {scd_type: "SCD_TYPE_2", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
+    elif mode == "append_only" then
+      {scd_type: "APPEND_ONLY", query_based_connector_config: {cursor_columns: ["dt"]}}
+    else
+      {scd_type: "SCD_TYPE_1", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
+    end;
   {
     name: env.INGESTION_PIPELINE_NAME,
     continuous: false,
@@ -357,23 +441,87 @@ ig_qbc_spec="$(jq -n '
     ingestion_definition: {
       connection_name: env.CONNECTION_NAME,
       source_type: env.SOURCE_TYPE,
-      objects: [
-        {
-          table: (
+      objects: (
+        (env.QBC_FCON_TABLE_SCD_JSON | fromjson)
+        | map(
             {
-              source_schema: env.DB_SCHEMA,
-              source_table: "intpk",
-              destination_catalog: env.TARGET_CATALOG,
-              destination_schema: env.TARGET_SCHEMA,
-              table_configuration: {
-                scd_type: "SCD_TYPE_1",
-                query_based_connector_config: { cursor_columns: ["dt"] }
-              }
+              table: (
+                {
+                  source_schema: env.DB_SCHEMA,
+                  source_table: .table,
+                  destination_catalog: env.TARGET_CATALOG,
+                  destination_schema: env.TARGET_SCHEMA,
+                  table_configuration: table_cfg(.mode)
+                }
+                | (if env.SOURCE_TYPE != "MYSQL" then . + {source_catalog: env.DB_CATALOG} else . end)
+              )
             }
-            | (if env.SOURCE_TYPE != "MYSQL" then . + {source_catalog: env.DB_CATALOG} else . end)
           )
+      )
+    }
+  }
+  | (if env.PUBLISH_EVENT_LOG != "" then . + {
+        event_log: {
+          catalog: env.ELOG_CATALOG,
+          schema: env.ELOG_SCHEMA,
+          name: ("ingestion_elog_" + ((env.INGESTION_PIPELINE_ID // "") | gsub("-"; "_")))
         }
-      ]
+      } else . end)
+  | (if env.COMPUTE_INGEST == "serverless" then . + {serverless: true}
+     elif env.COMPUTE_INGEST == "classic" then . + {serverless: false}
+     else . end)
+')"
+
+# qbc_fc: foreign catalog ingestion (no connection_name; ingest_from_uc_foreign_catalog).
+# Direct from foreign catalog (no gateway); continuous is not supported.
+# Always includes schema-level object (DB_SCHEMA_SCH / *_sch tables) + table-level SCD objects (DB_SCHEMA).
+ig_qbc_fc_spec="$(jq -n '
+  def table_cfg(mode):
+    if mode == "scd_type1" then
+      {scd_type: "SCD_TYPE_1", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
+    elif mode == "scd_type2" then
+      {scd_type: "SCD_TYPE_2", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
+    elif mode == "append_only" then
+      {scd_type: "APPEND_ONLY", query_based_connector_config: {cursor_columns: ["dt"]}}
+    else
+      {scd_type: "SCD_TYPE_1", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
+    end;
+  {
+    name: env.INGESTION_PIPELINE_NAME,
+    continuous: false,
+    development: (env.PIPELINE_DEV_MODE == "true"),
+    catalog: env.TARGET_CATALOG,
+    schema: env.TARGET_SCHEMA,
+    ingestion_definition: {
+      ingest_from_uc_foreign_catalog: true,
+      source_type: "FOREIGN_CATALOG",
+      objects: (
+        [
+          {
+            schema: {
+              source_catalog: env.FOREIGN_CATALOG_NAME,
+              source_schema: env.DB_SCHEMA_SCH,
+              destination_catalog: env.TARGET_CATALOG,
+              destination_schema: env.TARGET_SCHEMA
+            }
+          }
+        ]
+        + (
+            (env.QBC_FC_TABLE_SCD_JSON | fromjson)
+            | map(
+                {
+                  table: {
+                    source_catalog: env.FOREIGN_CATALOG_NAME,
+                    source_schema: env.DB_SCHEMA,
+                    source_table: .table,
+                    destination_catalog: env.TARGET_CATALOG,
+                    destination_schema: env.TARGET_SCHEMA,
+                    table_configuration: table_cfg(.mode)
+                  }
+                }
+              )
+          )
+      )
     }
   }
   | (if env.PUBLISH_EVENT_LOG != "" then . + {
@@ -402,12 +550,16 @@ case "${CDC_QBC}" in
         echo "creating ${CDC_QBC} ingestion pipeline (CDC_CT_MODE=${CDC_CT_MODE})"
         DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines create --json "$ig_cdc_spec"
     ;;
-    "qbc")
-        echo "qbc: query-based ingestion of intpk (requires primary key)"
-        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines create --json "$ig_qbc_spec"
+    "qbc_fcon")
+        echo "qbc_fcon: query-based ingestion from ${DB_SCHEMA} (default intpk+strpk+dtix append_only)"
+        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines create --json "$ig_qbc_fcon_spec"
+    ;;
+    "qbc_fc")
+        echo "qbc_fc: schema ingest ${DB_SCHEMA_SCH} (*_sch) + table SCD from ${DB_SCHEMA} → ${TARGET_SCHEMA}"
+        DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines create --json "$ig_qbc_fc_spec"
     ;;
     *)
-        echo "CDC_QBC=${CDC_QBC} must be cdc|qbc|cdc_single_pipeline"
+        echo "CDC_QBC=${CDC_QBC} must be cdc|qbc_fcon|qbc_fc|cdc_single_pipeline"
         return 1
     ;;
 esac
@@ -517,9 +669,28 @@ if [[ ! -z "$sql_dml_generator" ]] && [[ $DML_INTERVAL_SEC -gt 0 ]]; then
         if [[ -n "${LOAD_GENERATOR_PID:-}" ]]; then
             echo "Load Generator: PID=$LOAD_GENERATOR_PID is no longer running; restarting."
         fi
-        SQLCLI >/dev/null 2>&1 <<< $(echo "$sql_dml_generator") &
+        _lg_stdout="/tmp/load_generator_stdout.$$"
+        _lg_stderr="/tmp/load_generator_stderr.$$"
+        : > "${_lg_stdout}"
+        : > "${_lg_stderr}"
+        # Do not discard streams: connect failures must be visible. PRINT_RETURN
+        # surfaces RC without killing the parent shell (loop stays backgrounded).
+        DB_EXIT_ON_ERROR=PRINT_RETURN \
+          DB_STDOUT="${_lg_stdout}" \
+          DB_STDERR="${_lg_stderr}" \
+          SQLCLI <<< "$(echo "$sql_dml_generator")" &
         export LOAD_GENERATOR_PID=$!
-        _lg_started=1
+        sleep 2
+        if ! kill -0 "$LOAD_GENERATOR_PID" 2>/dev/null; then
+            echo "Load Generator: failed to start (PID=$LOAD_GENERATOR_PID exited)." >&2
+            [[ -s "${_lg_stderr}" ]] && cat "${_lg_stderr}" >&2
+            [[ -s "${_lg_stdout}" ]] && cat "${_lg_stdout}" >&2
+            export LOAD_GENERATOR_PID=""
+            _lg_started=0
+        else
+            _lg_started=1
+        fi
+        unset _lg_stdout _lg_stderr
     fi
 else
     export LOAD_GENERATOR_PID=""
@@ -617,6 +788,9 @@ echo -e "elog/GW Tlmy  : ${DATABRICKS_HOST_NAME}/explore/data/${ELOG_CATALOG}/${
 echo -e "Staging schema: ${DATABRICKS_HOST_NAME}/explore/data/${STAGING_CATALOG}/${STAGING_SCHEMA}"
 echo -e "Target schema : ${DATABRICKS_HOST_NAME}/explore/data/${TARGET_CATALOG}/${TARGET_SCHEMA}"
 echo -e "Connection    : ${DATABRICKS_HOST_NAME}/explore/connections/${CONNECTION_NAME}"
+if [[ "${CDC_QBC}" == "qbc_fc" ]]; then
+    echo -e "Foreign catalog: ${DATABRICKS_HOST_NAME}/explore/data/${FOREIGN_CATALOG_NAME}"
+fi
 echo -e "Job           : ${DATABRICKS_HOST_NAME}/jobs/$INGESTION_JOB_ID \n"   
 
 DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines list-pipelines --filter "name like '${WHOAMI}_%'"

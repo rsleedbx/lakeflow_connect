@@ -19,24 +19,47 @@ if [[ "$INITIAL_SNAPSHOT_ROWS" -eq 0 ]] && [[ "${DB_SCHEMA}" != *"_${INITIAL_SNA
     echo "Changing schema to $DB_SCHEMA"
 fi
 
+export DB_SCHEMA
+export DB_SCHEMA_SCH="${DB_SCHEMA}_sch"
+echo "Demo schemas: DB_SCHEMA=${DB_SCHEMA} (per-table) DB_SCHEMA_SCH=${DB_SCHEMA_SCH} (*_sch tables)"
+
 # #############################################################################
 # dml generator
 
 # make sure to quote echo "$sql_dml_generator" otherwise the newline will be removed 
 
 if ! declare -p sql_dml_generator &> /dev/null; then
-echo "using default sql_dml_generator.  echo \"\$sql_dml_generator\" to view" 
+echo "using default sql_dml_generator.  echo \"\$sql_dml_generator\" to view"
+_sql_dml_body=""
+for _sfx in "" "_sch"; do
+  if [[ -z "${_sfx}" ]]; then
+    _schema="${DB_SCHEMA}"
+  else
+    _schema="${DB_SCHEMA_SCH}"
+  fi
+  _sql_dml_body+="
+IF OBJECT_ID(N'${_schema}.intpk${_sfx}', N'U') IS NOT NULL
+    begin
+    insert into [${_schema}].[intpk${_sfx}] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
+    delete from [${_schema}].[intpk${_sfx}] where pk=(select min(pk) from [${_schema}].[intpk${_sfx}])
+    update [${_schema}].[intpk${_sfx}] set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from [${_schema}].[intpk${_sfx}])
+    end
+IF OBJECT_ID(N'${_schema}.strpk${_sfx}', N'U') IS NOT NULL
+    begin
+    insert into [${_schema}].[strpk${_sfx}] (pk, dt) values
+        (CONVERT(varchar(36), NEWID()), CURRENT_TIMESTAMP),
+        (CONVERT(varchar(36), NEWID()), CURRENT_TIMESTAMP),
+        (CONVERT(varchar(36), NEWID()), CURRENT_TIMESTAMP)
+    delete from [${_schema}].[strpk${_sfx}] where pk=(select min(pk) from [${_schema}].[strpk${_sfx}])
+    update [${_schema}].[strpk${_sfx}] set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from [${_schema}].[strpk${_sfx}])
+    end
+IF OBJECT_ID(N'${_schema}.dtix${_sfx}', N'U') IS NOT NULL
+    insert into [${_schema}].[dtix${_sfx}] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)"
+done
 sql_dml_generator="
 while ( 1 = 1 )
 begin
-IF OBJECT_ID(N'${DB_SCHEMA}.intpk', N'U') IS NOT NULL
-    begin
-    insert into [${DB_SCHEMA}].[intpk] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
-    delete from [${DB_SCHEMA}].[intpk] where pk=(select min(pk) from [${DB_SCHEMA}].[intpk])
-    update [${DB_SCHEMA}].[intpk] set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from [${DB_SCHEMA}].[intpk])
-    end
-IF OBJECT_ID(N'${DB_SCHEMA}.dtix', N'U') IS NOT NULL
-    insert into [${DB_SCHEMA}].[dtix] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)
+${_sql_dml_body}
 WAITFOR DELAY '00:00:${DML_INTERVAL_SEC}'
 end
 go
@@ -119,6 +142,8 @@ DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG"
 -- ok to fail if table does not exist 
 ALTER TABLE [${DB_SCHEMA}].[intpk] disable CHANGE_TRACKING
 go
+ALTER TABLE [${DB_SCHEMA_SCH}].[intpk_sch] disable CHANGE_TRACKING
+go
     
 if not exists (select * from sys.change_tracking_databases where database_id=db_id())
     BEGIN
@@ -190,6 +215,12 @@ fi
 DB_USERNAME="$DBA_USERNAME" DB_PASSWORD="$DBA_PASSWORD" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
 -- ok to fail if table does not exist 
 EXEC sys.sp_cdc_disable_table @source_schema = N'${DB_SCHEMA}', @source_name = N'dtix', @capture_instance = N'all'
+go
+EXEC sys.sp_cdc_disable_table @source_schema = N'${DB_SCHEMA}', @source_name = N'strpk', @capture_instance = N'all'
+go
+EXEC sys.sp_cdc_disable_table @source_schema = N'${DB_SCHEMA_SCH}', @source_name = N'dtix_sch', @capture_instance = N'all'
+go
+EXEC sys.sp_cdc_disable_table @source_schema = N'${DB_SCHEMA_SCH}', @source_name = N'strpk_sch', @capture_instance = N'all'
 go
 
 if exists (select name, is_cdc_enabled from sys.databases where name=db_name() and is_cdc_enabled=0)
@@ -286,19 +317,25 @@ DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CAT
 
 # #############################################################################
 
-# create schema
+# create schemas: DB_SCHEMA (per-table) + DB_SCHEMA_SCH (*_sch tables)
 
+for _demo_schema in "${DB_SCHEMA}" "${DB_SCHEMA_SCH}"; do
 DB_EXIT_ON_ERROR=PRINT_EXIT DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
-create schema [${DB_SCHEMA}]
+create schema [${_demo_schema}]
 go
 EOF
-# /tmp/sqlcmd_stdout.$$ will be 0 if schema was created.  drop the schema when done
 if [[ ! -s /tmp/sqlcmd_stdout.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
+    if [[ "${_demo_schema}" == "${DB_SCHEMA_SCH}" ]]; then
+      _drops="drop table [${_demo_schema}].[intpk_sch];\ngo\ndrop table [${_demo_schema}].[strpk_sch];\ngo\ndrop table [${_demo_schema}].[dtix_sch];\ngo\ndrop schema [${_demo_schema}];\ngo"
+    else
+      _drops="drop table [${_demo_schema}].[intpk];\ngo\ndrop table [${_demo_schema}].[strpk];\ngo\ndrop table [${_demo_schema}].[dtix];\ngo\ndrop schema [${_demo_schema}];\ngo"
+    fi
     nohup sleep "${DELETE_DB_AFTER_SLEEP}" && \
-      echo -e "drop table [${DB_SCHEMA}].[intpk];\ngo\ndrop table [${DB_SCHEMA}].[dtix];\ngo\ndrop schema [${DB_SCHEMA}];\ngo" | \
+      echo -e "${_drops}" | \
       DB_CATALOG="${DB_CATALOG}" SQLCLI_USER >> ~/nohup.out 2>&1 &
-    echo -e "\nDeleting ${DB_SCHEMA} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n"
+    echo -e "\nDeleting ${_demo_schema} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n"
 fi
+done
 
 # #############################################################################
 
@@ -307,7 +344,15 @@ fi
 DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
 create table [${DB_SCHEMA}].[intpk] (pk int IDENTITY NOT NULL primary key, dt datetime)
 go
+create table [${DB_SCHEMA}].[strpk] (pk nvarchar(64) NOT NULL primary key, dt datetime)
+go
 create table [${DB_SCHEMA}].[dtix] (dt datetime)
+go
+create table [${DB_SCHEMA_SCH}].[intpk_sch] (pk int IDENTITY NOT NULL primary key, dt datetime)
+go
+create table [${DB_SCHEMA_SCH}].[strpk_sch] (pk nvarchar(64) NOT NULL primary key, dt datetime)
+go
+create table [${DB_SCHEMA_SCH}].[dtix_sch] (dt datetime)
 go
 EOF
 
@@ -316,90 +361,90 @@ DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
 IF OBJECT_ID(N'${DB_SCHEMA}.intpk', N'U') IS NOT NULL
     insert into [${DB_SCHEMA}].[intpk] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
 go
+IF OBJECT_ID(N'${DB_SCHEMA}.strpk', N'U') IS NOT NULL
+    insert into [${DB_SCHEMA}].[strpk] (pk, dt) values (N's1',CURRENT_TIMESTAMP),(N's2',CURRENT_TIMESTAMP),(N's3',CURRENT_TIMESTAMP)
+go
 IF OBJECT_ID(N'${DB_SCHEMA}.dtix', N'U') IS NOT NULL
     insert into [${DB_SCHEMA}].[dtix] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)
+go
+IF OBJECT_ID(N'${DB_SCHEMA_SCH}.intpk_sch', N'U') IS NOT NULL
+    insert into [${DB_SCHEMA_SCH}].[intpk_sch] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
+go
+IF OBJECT_ID(N'${DB_SCHEMA_SCH}.strpk_sch', N'U') IS NOT NULL
+    insert into [${DB_SCHEMA_SCH}].[strpk_sch] (pk, dt) values (N's1',CURRENT_TIMESTAMP),(N's2',CURRENT_TIMESTAMP),(N's3',CURRENT_TIMESTAMP)
+go
+IF OBJECT_ID(N'${DB_SCHEMA_SCH}.dtix_sch', N'U') IS NOT NULL
+    insert into [${DB_SCHEMA_SCH}].[dtix_sch] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)
 go
 EOF
 
 echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA}].[intpk]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
-if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table intpk ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
-    return 1
-fi
-
+if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table intpk ok ${DB_SCHEMA}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
+echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA}].[strpk]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
+if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table strpk ok ${DB_SCHEMA}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 echo -e "SET NOCOUNT ON\ngo\n select top 1 dt from [${DB_SCHEMA}].[dtix]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
-if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table dtix ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
-    return 1
-fi
+if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table dtix ok ${DB_SCHEMA}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
+echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA_SCH}].[intpk_sch]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
+if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table intpk_sch ok ${DB_SCHEMA_SCH}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
+echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA_SCH}].[strpk_sch]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
+if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table strpk_sch ok ${DB_SCHEMA_SCH}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
+echo -e "SET NOCOUNT ON\ngo\n select top 1 dt from [${DB_SCHEMA_SCH}].[dtix_sch]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
+if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table dtix_sch ok ${DB_SCHEMA_SCH}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 fi
 
 # #############################################################################
 
-# Run Lakeflow utility setup procs for this schema (after tables exist)
-echo "running utility_script setup for SCHEMAS:${DB_SCHEMA} mode=${CDC_CT_MODE}"
+# Run Lakeflow utility setup for both schemas
+for _demo_schema in "${DB_SCHEMA}" "${DB_SCHEMA_SCH}"; do
+echo "running utility_script setup for SCHEMAS:${_demo_schema} mode=${CDC_CT_MODE}"
 DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CATALOG}" \
   python3 "${_LFC_REPO_ROOT}/utils/sqlserver-utility-script.py" \
     --user "${USER_USERNAME}" \
-    --tables "SCHEMAS:${DB_SCHEMA}" \
+    --tables "SCHEMAS:${_demo_schema}" \
     --capture-mode "${CDC_CT_MODE}" \
     --setup-only \
     --apply || return 1
+done
 
 # #############################################################################
 
-# enable CT on  tables
+# enable CT / CDC on tables
 
 set_repl_on_table() {
-if [[ "${CDC_CT_MODE}" =~ ^(BOTH|CT)$  ]]; then 
+if [[ "${CDC_CT_MODE}" =~ ^(BOTH|CT)$  ]]; then
 DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
-    ALTER TABLE [${DB_SCHEMA}].[intpk] ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON) 
+    ALTER TABLE [${DB_SCHEMA}].[intpk] ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON)
+go
+    ALTER TABLE [${DB_SCHEMA_SCH}].[intpk_sch] ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON)
 go
 EOF
-
-echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, schema_name(t.schema_id) TABLE_SCHEM, t.name TABLE_NAME  from sys.change_tracking_tables ctt left join sys.tables t on ctt.object_id = t.object_id where t.schema_id=schema_id('${DB_SCHEMA}')" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
-if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "ct table enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
-    return 1
-fi
-
+echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, schema_name(t.schema_id) TABLE_SCHEM, t.name TABLE_NAME  from sys.change_tracking_tables ctt left join sys.tables t on ctt.object_id = t.object_id where t.schema_id in (schema_id('${DB_SCHEMA}'), schema_id('${DB_SCHEMA_SCH}'))" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
+if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "ct table enabled ok"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 else
-
-echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, schema_name(t.schema_id) TABLE_SCHEM, t.name TABLE_NAME  from sys.change_tracking_tables ctt left join sys.tables t on ctt.object_id = t.object_id where t.schema_id=schema_id('${DB_SCHEMA}')" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
-if [[ ! -s /tmp/select_stdout.$$ ]]; then echo "ct table disabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
-    return 1
+echo "ct table enable skipped (CDC_CT_MODE=${CDC_CT_MODE})"
 fi
 
-fi
-
-
-
-if [[ "${CDC_CT_MODE}" =~ ^(BOTH|CDC)$  ]]; then 
-
+if [[ "${CDC_CT_MODE}" =~ ^(BOTH|CDC)$  ]]; then
 DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
 EXEC sys.sp_cdc_enable_table @source_schema = N'${DB_SCHEMA}', @source_name = N'dtix', @role_name = NULL, @supports_net_changes = 0
 go
+EXEC sys.sp_cdc_enable_table @source_schema = N'${DB_SCHEMA}', @source_name = N'strpk', @role_name = NULL, @supports_net_changes = 0
+go
+EXEC sys.sp_cdc_enable_table @source_schema = N'${DB_SCHEMA_SCH}', @source_name = N'dtix_sch', @role_name = NULL, @supports_net_changes = 0
+go
+EXEC sys.sp_cdc_enable_table @source_schema = N'${DB_SCHEMA_SCH}', @source_name = N'strpk_sch', @role_name = NULL, @supports_net_changes = 0
+go
 EOF
-
-echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, s.name TABLE_SCHEM, t.name as TABLE_NAME from sys.tables t left join sys.schemas s on t.schema_id = s.schema_id where t.is_tracked_by_cdc=1 and t.schema_id=schema_id('${DB_SCHEMA}')" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
-if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "cdc table enabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
-    return 1
-fi
-
+echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, s.name TABLE_SCHEM, t.name as TABLE_NAME from sys.tables t left join sys.schemas s on t.schema_id = s.schema_id where t.is_tracked_by_cdc=1 and t.schema_id in (schema_id('${DB_SCHEMA}'), schema_id('${DB_SCHEMA_SCH}'))" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
+if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "cdc table enabled ok"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
 else
-
-echo -e "SET NOCOUNT ON\ngo\n select db_name() TABLE_CAT, s.name TABLE_SCHEM, t.name as TABLE_NAME from sys.tables t left join sys.schemas s on t.schema_id = s.schema_id where t.is_tracked_by_cdc=1 and t.schema_id=schema_id('${DB_SCHEMA}')" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
-if [[ ! -s /tmp/select_stdout.$$ ]]; then echo "cdc table disabled ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"; 
-else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$
-    return 1
-fi
-
+echo "cdc table enable skipped (CDC_CT_MODE=${CDC_CT_MODE})"
 fi
 }
 
 set_repl_on_table
+
+# #############################################################################
 
 # #############################################################################
 

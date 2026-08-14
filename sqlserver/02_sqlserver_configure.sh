@@ -46,10 +46,7 @@ IF OBJECT_ID(N'${_schema}.intpk${_sfx}', N'U') IS NOT NULL
     end
 IF OBJECT_ID(N'${_schema}.strpk${_sfx}', N'U') IS NOT NULL
     begin
-    insert into [${_schema}].[strpk${_sfx}] (pk, dt) values
-        (CONVERT(varchar(36), NEWID()), CURRENT_TIMESTAMP),
-        (CONVERT(varchar(36), NEWID()), CURRENT_TIMESTAMP),
-        (CONVERT(varchar(36), NEWID()), CURRENT_TIMESTAMP)
+    insert into [${_schema}].[strpk${_sfx}] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)
     delete from [${_schema}].[strpk${_sfx}] where pk=(select min(pk) from [${_schema}].[strpk${_sfx}])
     update [${_schema}].[strpk${_sfx}] set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from [${_schema}].[strpk${_sfx}])
     end
@@ -326,10 +323,11 @@ go
 EOF
 if [[ ! -s /tmp/sqlcmd_stdout.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
     if [[ "${_demo_schema}" == "${DB_SCHEMA_SCH}" ]]; then
-      _drops="drop table [${_demo_schema}].[intpk_sch];\ngo\ndrop table [${_demo_schema}].[strpk_sch];\ngo\ndrop table [${_demo_schema}].[dtix_sch];\ngo\ndrop schema [${_demo_schema}];\ngo"
+      _sfx="_sch"
     else
-      _drops="drop table [${_demo_schema}].[intpk];\ngo\ndrop table [${_demo_schema}].[strpk];\ngo\ndrop table [${_demo_schema}].[dtix];\ngo\ndrop schema [${_demo_schema}];\ngo"
+      _sfx=""
     fi
+    _drops="drop table [${_demo_schema}].[intpk${_sfx}];\ngo\ndrop table [${_demo_schema}].[strpk${_sfx}];\ngo\ndrop table [${_demo_schema}].[dtix${_sfx}];\ngo\ndrop schema [${_demo_schema}];\ngo"
     nohup sleep "${DELETE_DB_AFTER_SLEEP}" && \
       echo -e "${_drops}" | \
       DB_CATALOG="${DB_CATALOG}" SQLCLI_USER >> ~/nohup.out 2>&1 &
@@ -341,56 +339,46 @@ done
 
 # create tables
 
-DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
-create table [${DB_SCHEMA}].[intpk] (pk int IDENTITY NOT NULL primary key, dt datetime)
+# Recreate strpk* so NEWID default applies (plain create would fail / keep old DDL)
+for _sfx in "" "_sch"; do
+  if [[ -z "${_sfx}" ]]; then
+    _schema="${DB_SCHEMA}"
+  else
+    _schema="${DB_SCHEMA_SCH}"
+  fi
+
+  DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
+IF OBJECT_ID(N'${_schema}.strpk${_sfx}', N'U') IS NOT NULL drop table [${_schema}].[strpk${_sfx}]
 go
-create table [${DB_SCHEMA}].[strpk] (pk nvarchar(64) NOT NULL primary key, dt datetime)
+create table [${_schema}].[intpk${_sfx}] (pk int IDENTITY NOT NULL primary key, dt datetime)
 go
-create table [${DB_SCHEMA}].[dtix] (dt datetime)
+create table [${_schema}].[strpk${_sfx}] (pk nvarchar(64) NOT NULL primary key DEFAULT CONVERT(varchar(36), NEWID()), dt datetime)
 go
-create table [${DB_SCHEMA_SCH}].[intpk_sch] (pk int IDENTITY NOT NULL primary key, dt datetime)
-go
-create table [${DB_SCHEMA_SCH}].[strpk_sch] (pk nvarchar(64) NOT NULL primary key, dt datetime)
-go
-create table [${DB_SCHEMA_SCH}].[dtix_sch] (dt datetime)
+create table [${_schema}].[dtix${_sfx}] (dt datetime)
 go
 EOF
 
-if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
-DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
-IF OBJECT_ID(N'${DB_SCHEMA}.intpk', N'U') IS NOT NULL
-    insert into [${DB_SCHEMA}].[intpk] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
+  if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
+    DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
+IF OBJECT_ID(N'${_schema}.intpk${_sfx}', N'U') IS NOT NULL
+    insert into [${_schema}].[intpk${_sfx}] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
 go
-IF OBJECT_ID(N'${DB_SCHEMA}.strpk', N'U') IS NOT NULL
-    insert into [${DB_SCHEMA}].[strpk] (pk, dt) values (N's1',CURRENT_TIMESTAMP),(N's2',CURRENT_TIMESTAMP),(N's3',CURRENT_TIMESTAMP)
+IF OBJECT_ID(N'${_schema}.strpk${_sfx}', N'U') IS NOT NULL
+    insert into [${_schema}].[strpk${_sfx}] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)
 go
-IF OBJECT_ID(N'${DB_SCHEMA}.dtix', N'U') IS NOT NULL
-    insert into [${DB_SCHEMA}].[dtix] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)
-go
-IF OBJECT_ID(N'${DB_SCHEMA_SCH}.intpk_sch', N'U') IS NOT NULL
-    insert into [${DB_SCHEMA_SCH}].[intpk_sch] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP)
-go
-IF OBJECT_ID(N'${DB_SCHEMA_SCH}.strpk_sch', N'U') IS NOT NULL
-    insert into [${DB_SCHEMA_SCH}].[strpk_sch] (pk, dt) values (N's1',CURRENT_TIMESTAMP),(N's2',CURRENT_TIMESTAMP),(N's3',CURRENT_TIMESTAMP)
-go
-IF OBJECT_ID(N'${DB_SCHEMA_SCH}.dtix_sch', N'U') IS NOT NULL
-    insert into [${DB_SCHEMA_SCH}].[dtix_sch] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)
+IF OBJECT_ID(N'${_schema}.dtix${_sfx}', N'U') IS NOT NULL
+    insert into [${_schema}].[dtix${_sfx}] (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP)
 go
 EOF
 
-echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA}].[intpk]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
-if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table intpk ok ${DB_SCHEMA}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
-echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA}].[strpk]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
-if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table strpk ok ${DB_SCHEMA}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
-echo -e "SET NOCOUNT ON\ngo\n select top 1 dt from [${DB_SCHEMA}].[dtix]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
-if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table dtix ok ${DB_SCHEMA}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
-echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA_SCH}].[intpk_sch]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
-if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table intpk_sch ok ${DB_SCHEMA_SCH}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
-echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${DB_SCHEMA_SCH}].[strpk_sch]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
-if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table strpk_sch ok ${DB_SCHEMA_SCH}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
-echo -e "SET NOCOUNT ON\ngo\n select top 1 dt from [${DB_SCHEMA_SCH}].[dtix_sch]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
-if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table dtix_sch ok ${DB_SCHEMA_SCH}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
-fi
+    echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${_schema}].[intpk${_sfx}]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
+    if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table intpk${_sfx} ok ${_schema}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
+    echo -e "SET NOCOUNT ON\ngo\n select max(pk) from [${_schema}].[strpk${_sfx}]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
+    if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table strpk${_sfx} ok ${_schema}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
+    echo -e "SET NOCOUNT ON\ngo\n select top 1 dt from [${_schema}].[dtix${_sfx}]" | DB_CATALOG="${DB_CATALOG}" SQLCLI_USER
+    if [[ -s /tmp/sqlcmd_stdout.$$ ]]; then echo "table dtix${_sfx} ok ${_schema}"; else cat /tmp/sqlcmd_stdout.$$ /tmp/sqlcmd_stderr.$$; return 1; fi
+  fi
+done
 
 # #############################################################################
 

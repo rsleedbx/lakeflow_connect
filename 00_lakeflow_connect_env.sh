@@ -41,7 +41,7 @@ export STATE
 # frequently setup settings
 echo "First is the default
 DATABRICKS_CONFIG_FILE=dogfoodazure|dogfoodaws
-CDC_QBC=cdc|icdc|qbc_fcon|qbc_fc
+CDC_QBC=cdc|icdc|cdc_single_pipeline|qbc_fcon|qbc_fc
 GATEWAY_COMPUTE=default|serverless|classic
 INGEST_COMPUTE=default|serverless|classic
 # Source schemas (set from DB_SCHEMA base in 02):
@@ -54,6 +54,12 @@ TABLE_SCD_TYPE=
   qbc_fcon:intpk=scd_type1
   qbc_fcon:strpk=scd_type1
   qbc_fcon:dtix=append_only
+  cdc:intpk=scd_type1
+  cdc:strpk=scd_type2
+  cdc:dtix=append_only
+  icdc:intpk=scd_type1
+  icdc:strpk=scd_type2
+  icdc:dtix=append_only
 "
 
 
@@ -167,10 +173,10 @@ export USER_PASSWORD=${USER_PASSWORD:-""}
 export CONNECTION_NAME="${CONNECTION_NAME:-""}"
 export CDC_CT_MODE=${CDC_CT_MODE:-"BOTH"}   # ['BOTH'|'CT'|'CDC'|'NONE']
 
-# pipeline architecture: cdc (gw+ingest) | qbc_fcon (query-based foreign connection) | qbc_fc (query-based foreign catalog) | cdc_single_pipeline
+# pipeline architecture: cdc (gw+ingest) | qbc_fcon (query-based foreign connection) | qbc_fc (query-based foreign catalog) | cdc_single_pipeline|icdc (integrated CDC, no separate gateway)
 export CDC_QBC=${CDC_QBC:-"cdc"}
 # Per-mode table SCD/append matrix (tables in DB_SCHEMA): "<cdc|icdc|qbc_fcon|qbc_fc>:<table>=scd_type1|scd_type2|append_only"
-export TABLE_SCD_TYPE="${TABLE_SCD_TYPE:-$'\nqbc_fc:intpk=scd_type1\nqbc_fc:strpk=scd_type2\nqbc_fc:dtix=append_only\nqbc_fcon:intpk=scd_type1\nqbc_fcon:strpk=scd_type1\nqbc_fcon:dtix=append_only\n'}"
+export TABLE_SCD_TYPE="${TABLE_SCD_TYPE:-$'\nqbc_fc:intpk=scd_type1\nqbc_fc:strpk=scd_type2\nqbc_fc:dtix=append_only\nqbc_fcon:intpk=scd_type1\nqbc_fcon:strpk=scd_type1\nqbc_fcon:dtix=append_only\ncdc:intpk=scd_type1\ncdc:strpk=scd_type2\ncdc:dtix=append_only\nicdc:intpk=scd_type1\nicdc:strpk=scd_type2\nicdc:dtix=append_only\n'}"
 # compute per pipeline: default (let DBX decide) | classic | serverless
 export COMPUTE_GATEWAY=${COMPUTE_GATEWAY:-"default"}
 export COMPUTE_INGEST=${COMPUTE_INGEST:-"default"}

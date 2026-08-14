@@ -45,10 +45,7 @@ for _sfx in "" "_sch"; do
         insert into ${_schema}.intpk${_sfx} (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
         delete from ${_schema}.intpk${_sfx} where pk=(select min(pk) from ${_schema}.intpk${_sfx});
         update ${_schema}.intpk${_sfx} set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from ${_schema}.intpk${_sfx});
-        insert into ${_schema}.strpk${_sfx} (pk, dt) values
-            (format('s%s-1', counter), CURRENT_TIMESTAMP),
-            (format('s%s-2', counter), CURRENT_TIMESTAMP),
-            (format('s%s-3', counter), CURRENT_TIMESTAMP);
+        insert into ${_schema}.strpk${_sfx} (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
         delete from ${_schema}.strpk${_sfx} where pk=(select min(pk) from ${_schema}.strpk${_sfx});
         update ${_schema}.strpk${_sfx} set dt=CURRENT_TIMESTAMP where pk=(select min(pk) from ${_schema}.strpk${_sfx});
         insert into ${_schema}.dtix${_sfx} (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);"
@@ -209,14 +206,13 @@ SELECT 1;
 EOF
 if [[ ! -s /tmp/psql_stderr.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
     if [[ "${_demo_schema}" == "${DB_SCHEMA_SCH}" ]]; then
-      _drops="drop table if exists ${_demo_schema}.intpk_sch;
-    drop table if exists ${_demo_schema}.strpk_sch;
-    drop table if exists ${_demo_schema}.dtix_sch;"
+      _sfx="_sch"
     else
-      _drops="drop table if exists ${_demo_schema}.intpk;
-    drop table if exists ${_demo_schema}.strpk;
-    drop table if exists ${_demo_schema}.dtix;"
+      _sfx=""
     fi
+    _drops="drop table if exists ${_demo_schema}.intpk${_sfx};
+    drop table if exists ${_demo_schema}.strpk${_sfx};
+    drop table if exists ${_demo_schema}.dtix${_sfx};"
     nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DB_STDOUT=~/nohup.out DB_STDERR=~/nohup.out DB_CATALOG="$DB_CATALOG" SQLCLI >>~/nohup.out 2>&1 << EOF &
     ${_drops}
     drop schema if exists ${_demo_schema};
@@ -231,48 +227,44 @@ done
 
 echo -e "Creating tables in ${DB_SCHEMA} and ${DB_SCHEMA_SCH}\n"
 
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
-    create table if not exists ${DB_SCHEMA}.intpk (pk serial primary key, dt timestamp);
-    create table if not exists ${DB_SCHEMA}.strpk (pk text primary key, dt timestamp);
-    create table if not exists ${DB_SCHEMA}.dtix (dt timestamp);
-    create table if not exists ${DB_SCHEMA_SCH}.intpk_sch (pk serial primary key, dt timestamp);
-    create table if not exists ${DB_SCHEMA_SCH}.strpk_sch (pk text primary key, dt timestamp);
-    create table if not exists ${DB_SCHEMA_SCH}.dtix_sch (dt timestamp);
+# Recreate strpk* so UUID default applies (IF NOT EXISTS would keep old DDL)
+for _sfx in "" "_sch"; do
+  if [[ -z "${_sfx}" ]]; then
+    _schema="${DB_SCHEMA}"
+  else
+    _schema="${DB_SCHEMA_SCH}"
+  fi
+
+  DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
+    drop table if exists ${_schema}.strpk${_sfx};
+    create table if not exists ${_schema}.intpk${_sfx} (pk serial primary key, dt timestamp);
+    create table ${_schema}.strpk${_sfx} (pk text primary key default gen_random_uuid()::text, dt timestamp);
+    create table if not exists ${_schema}.dtix${_sfx} (dt timestamp);
 EOF
 
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI_DBA <<EOF
-ALTER TABLE IF EXISTS ${DB_SCHEMA}.intpk OWNER TO ${USER_USERNAME};
-ALTER TABLE IF EXISTS ${DB_SCHEMA}.strpk OWNER TO ${USER_USERNAME};
-ALTER TABLE IF EXISTS ${DB_SCHEMA}.dtix OWNER TO ${USER_USERNAME};
-ALTER TABLE IF EXISTS ${DB_SCHEMA_SCH}.intpk_sch OWNER TO ${USER_USERNAME};
-ALTER TABLE IF EXISTS ${DB_SCHEMA_SCH}.strpk_sch OWNER TO ${USER_USERNAME};
-ALTER TABLE IF EXISTS ${DB_SCHEMA_SCH}.dtix_sch OWNER TO ${USER_USERNAME};
-GRANT ALL ON ALL TABLES IN SCHEMA ${DB_SCHEMA} TO ${USER_USERNAME};
-GRANT ALL ON ALL SEQUENCES IN SCHEMA ${DB_SCHEMA} TO ${USER_USERNAME};
-GRANT ALL ON ALL TABLES IN SCHEMA ${DB_SCHEMA_SCH} TO ${USER_USERNAME};
-GRANT ALL ON ALL SEQUENCES IN SCHEMA ${DB_SCHEMA_SCH} TO ${USER_USERNAME};
+  DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI_DBA <<EOF
+ALTER TABLE IF EXISTS ${_schema}.intpk${_sfx} OWNER TO ${USER_USERNAME};
+ALTER TABLE IF EXISTS ${_schema}.strpk${_sfx} OWNER TO ${USER_USERNAME};
+ALTER TABLE IF EXISTS ${_schema}.dtix${_sfx} OWNER TO ${USER_USERNAME};
+GRANT ALL ON ALL TABLES IN SCHEMA ${_schema} TO ${USER_USERNAME};
+GRANT ALL ON ALL SEQUENCES IN SCHEMA ${_schema} TO ${USER_USERNAME};
 SELECT 1;
 EOF
 
-if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
-    insert into ${DB_SCHEMA}.intpk (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
-    insert into ${DB_SCHEMA}.strpk (pk, dt) values ('s1',CURRENT_TIMESTAMP),('s2',CURRENT_TIMESTAMP),('s3',CURRENT_TIMESTAMP);
-    insert into ${DB_SCHEMA}.dtix (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
-    insert into ${DB_SCHEMA_SCH}.intpk_sch (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
-    insert into ${DB_SCHEMA_SCH}.strpk_sch (pk, dt) values ('s1',CURRENT_TIMESTAMP),('s2',CURRENT_TIMESTAMP),('s3',CURRENT_TIMESTAMP);
-    insert into ${DB_SCHEMA_SCH}.dtix_sch (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
-    select '${DB_SCHEMA}.intpk',max(pk) from ${DB_SCHEMA}.intpk;
-    select '${DB_SCHEMA}.strpk',max(pk) from ${DB_SCHEMA}.strpk;
-    select '${DB_SCHEMA}.dtix',dt from ${DB_SCHEMA}.dtix limit 1;
-    select '${DB_SCHEMA_SCH}.intpk_sch',max(pk) from ${DB_SCHEMA_SCH}.intpk_sch;
-    select '${DB_SCHEMA_SCH}.strpk_sch',max(pk) from ${DB_SCHEMA_SCH}.strpk_sch;
-    select '${DB_SCHEMA_SCH}.dtix_sch',dt from ${DB_SCHEMA_SCH}.dtix_sch limit 1;
+  if [[ "$INITIAL_SNAPSHOT_ROWS" -gt 0 ]]; then
+    DB_EXIT_ON_ERROR="PRINT_EXIT" DB_CATALOG="$DB_CATALOG" SQLCLI <<EOF
+    insert into ${_schema}.intpk${_sfx} (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
+    insert into ${_schema}.strpk${_sfx} (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP), (CURRENT_TIMESTAMP);
+    insert into ${_schema}.dtix${_sfx} (dt) values (CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP),(CURRENT_TIMESTAMP);
+    select '${_schema}.intpk${_sfx}',max(pk) from ${_schema}.intpk${_sfx};
+    select '${_schema}.strpk${_sfx}',max(pk) from ${_schema}.strpk${_sfx};
+    select '${_schema}.dtix${_sfx}',dt from ${_schema}.dtix${_sfx} limit 1;
 EOF
-for _t in "${DB_SCHEMA}.intpk" "${DB_SCHEMA}.strpk" "${DB_SCHEMA}.dtix" "${DB_SCHEMA_SCH}.intpk_sch" "${DB_SCHEMA_SCH}.strpk_sch" "${DB_SCHEMA_SCH}.dtix_sch"; do
-  if grep "^${_t},.\+$" /tmp/psql_stdout.$$; then echo "table ok ${_t}"; else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
+    for _t in "${_schema}.intpk${_sfx}" "${_schema}.strpk${_sfx}" "${_schema}.dtix${_sfx}"; do
+      if grep "^${_t},.\+$" /tmp/psql_stdout.$$; then echo "table ok ${_t}"; else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$; return 1; fi
+    done
+  fi
 done
-fi
 
 # #############################################################################
 # publication + slot (after tables exist)

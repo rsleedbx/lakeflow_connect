@@ -36,9 +36,6 @@ if [[ -z "$CONNECTION_NAME" ]]; then
     CONNECTION_NAME=$(echo "${WHOAMI}_${DB_HOST}_${DB_CATALOG}_${USER_USERNAME}" | tr '.@-' '_')
 fi
 export CONNECTION_NAME
-# long name
-#export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE:+${GATEWAY_DRIVER_NODE}GDN_}${GATEWAY_WORKER_NODE:+${GATEWAY_WORKER_NODE}GWN_}${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_GW
-#export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${GATEWAY_MIN_WORKERS}${GATEWAY_MAX_WORKERS}GMX_${GATEWAY_DRIVER_NODE:+${GATEWAY_DRIVER_NODE}GDN_}${GATEWAY_WORKER_NODE:+${GATEWAY_WORKER_NODE}GWN_}${INGESTION_PIPELINE_MIN_TRIGGER}TRG_${JOBS_PERFORMANCE_MODE:0:4}JPM_${PIPELINE_DEV_MODE:0:4}PDM_${DML_INTERVAL_SEC}TPS_${INITIAL_SNAPSHOT_ROWS}ROW_IG
 # short name with pipeline type + compute: e.g. ..._cdc_default_GW / ..._qbc_fcon_srvless_IG
 case "${CDC_QBC}" in
     "cdc") PIPELINE_TYPE_TAG="cdc" ;;
@@ -46,7 +43,7 @@ case "${CDC_QBC}" in
     "qbc_fc") PIPELINE_TYPE_TAG="qbc_fc" ;;
     "cdc_single_pipeline"|"icdc") PIPELINE_TYPE_TAG="icdc" ;;
     *)
-        echo "CDC_QBC=${CDC_QBC} must be cdc|qbc_fcon|qbc_fc|cdc_single_pipeline" >&2
+        echo "CDC_QBC=${CDC_QBC} must be cdc|qbc_fcon|qbc_fc|cdc_single_pipeline|icdc" >&2
         kill -INT $$
     ;;
 esac
@@ -240,7 +237,7 @@ export GATEWAY_PIPELINE_ID PUBLISH_EVENT_LOG ELOG_CATALOG ELOG_SCHEMA
 export PG_PRECREATE_SLOT_PUB="${PG_PRECREATE_SLOT_PUB:-1}"
 export FOREIGN_CATALOG_NAME="${FOREIGN_CATALOG_NAME:-${CONNECTION_NAME}}"
 
-export TABLE_SCD_TYPE="${TABLE_SCD_TYPE:-$'\nqbc_fc:intpk=scd_type1\nqbc_fc:strpk=scd_type2\nqbc_fc:dtix=append_only\nqbc_fcon:intpk=scd_type1\nqbc_fcon:strpk=scd_type1\nqbc_fcon:dtix=append_only\n'}"
+export TABLE_SCD_TYPE="${TABLE_SCD_TYPE:-$'\nqbc_fc:intpk=scd_type1\nqbc_fc:strpk=scd_type2\nqbc_fc:dtix=append_only\nqbc_fcon:intpk=scd_type1\nqbc_fcon:strpk=scd_type1\nqbc_fcon:dtix=append_only\ncdc:intpk=scd_type1\ncdc:strpk=scd_type2\ncdc:dtix=append_only\nicdc:intpk=scd_type1\nicdc:strpk=scd_type2\nicdc:dtix=append_only\n'}"
 
 # Parse TABLE_SCD_TYPE lines for a mode prefix into JSON: [{"table":"...","mode":"..."}, ...]
 table_scd_entries_json() {
@@ -280,25 +277,26 @@ case "${CDC_QBC}" in
     *) _TABLE_SCD_PREFIX="${CDC_QBC}" ;;
 esac
 TABLE_SCD_ENTRIES_JSON="$(table_scd_entries_json "${_TABLE_SCD_PREFIX}")"
-# Fall back: icdc → cdc entries if no icdc: lines
+# Fallbacks: icdc → cdc; any empty → shared demo defaults
 if [[ "${_TABLE_SCD_PREFIX}" == "icdc" ]] && [[ "${TABLE_SCD_ENTRIES_JSON}" == "[]" ]]; then
     TABLE_SCD_ENTRIES_JSON="$(table_scd_entries_json cdc)"
 fi
+[[ "${TABLE_SCD_ENTRIES_JSON}" == "[]" ]] && TABLE_SCD_ENTRIES_JSON='[{"table":"intpk","mode":"scd_type1"},{"table":"strpk","mode":"scd_type2"},{"table":"dtix","mode":"append_only"}]'
 export TABLE_SCD_ENTRIES_JSON
-# qbc_fc table mode defaults from TABLE_SCD_TYPE qbc_fc: lines (env default)
-QBC_FC_TABLE_SCD_JSON="$(table_scd_entries_json qbc_fc)"
-[[ "${QBC_FC_TABLE_SCD_JSON}" == "[]" ]] && QBC_FC_TABLE_SCD_JSON='[{"table":"intpk","mode":"scd_type1"},{"table":"strpk","mode":"scd_type2"},{"table":"dtix","mode":"append_only"}]'
-export QBC_FC_TABLE_SCD_JSON
-# qbc_fcon: qbc_fcon: entries or default intpk+strpk SCD_TYPE_1 + dtix append_only
-QBC_FCON_TABLE_SCD_JSON="$(table_scd_entries_json qbc_fcon)"
-[[ "${QBC_FCON_TABLE_SCD_JSON}" == "[]" ]] && QBC_FCON_TABLE_SCD_JSON='[{"table":"intpk","mode":"scd_type1"},{"table":"strpk","mode":"scd_type1"},{"table":"dtix","mode":"append_only"}]'
-export QBC_FCON_TABLE_SCD_JSON
 
-# Shared cdc / cdc_single_pipeline (icdc) ingestion spec.
-# Objects from CDC_CT_MODE: CT=intpk, CDC=dtix+strpk, BOTH=intpk+dtix+strpk (from DB_SCHEMA);
-# NONE=schema-level from DB_SCHEMA_SCH (*_sch tables).
-# When TABLE_SCD_TYPE has cdc:/icdc: entries, apply scd/cursor config to matching tables.
-ig_cdc_spec="$(jq -n '
+# Source catalog on objects: foreign catalog for qbc_fc; DB_CATALOG otherwise (omit for MySQL).
+if [[ "${CDC_QBC}" == "qbc_fc" ]]; then
+    export IG_SOURCE_CATALOG="${FOREIGN_CATALOG_NAME}"
+elif [[ "${SOURCE_TYPE}" == "MYSQL" ]]; then
+    export IG_SOURCE_CATALOG=""
+else
+    export IG_SOURCE_CATALOG="${DB_CATALOG}"
+fi
+
+# Shared objects for every CDC_QBC mode:
+#   - schema-level from DB_SCHEMA_SCH (*_sch tables)
+#   - per-table SCD from DB_SCHEMA (intpk/strpk/dtix via TABLE_SCD_TYPE)
+IG_OBJECTS_JSON="$(jq -n '
   def table_cfg(mode):
     if mode == "scd_type1" then
       {scd_type: "SCD_TYPE_1", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
@@ -307,39 +305,42 @@ ig_cdc_spec="$(jq -n '
     elif mode == "append_only" then
       {scd_type: "APPEND_ONLY", query_based_connector_config: {cursor_columns: ["dt"]}}
     else
-      {}
+      {scd_type: "SCD_TYPE_1", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
     end;
-  def bare_table(name):
+  def with_src_catalog:
+    if env.IG_SOURCE_CATALOG != "" then . + {source_catalog: env.IG_SOURCE_CATALOG} else . end;
+  [
     {
-      table: (
+      schema: (
         {
-          source_schema: env.DB_SCHEMA,
-          source_table: name,
+          source_schema: env.DB_SCHEMA_SCH,
           destination_catalog: env.TARGET_CATALOG,
           destination_schema: env.TARGET_SCHEMA
-        }
-        | (if env.SOURCE_TYPE != "MYSQL" then . + {source_catalog: env.DB_CATALOG} else . end)
+        } | with_src_catalog
       )
-    };
-  def configured_table(name; mode):
-    {
-      table: (
-        {
-          source_schema: env.DB_SCHEMA,
-          source_table: name,
-          destination_catalog: env.TARGET_CATALOG,
-          destination_schema: env.TARGET_SCHEMA,
-          table_configuration: table_cfg(mode)
-        }
-        | (if env.SOURCE_TYPE != "MYSQL" then . + {source_catalog: env.DB_CATALOG} else . end)
-      )
-    };
-  def scd_mode_for(name):
-    (env.TABLE_SCD_ENTRIES_JSON | fromjson) as $entries
-    | ($entries | map(select(.table == name)) | .[0].mode // "");
-  def maybe_table(name):
-    (scd_mode_for(name)) as $m
-    | if $m != "" then configured_table(name; $m) else bare_table(name) end;
+    }
+  ]
+  + (
+      (env.TABLE_SCD_ENTRIES_JSON | fromjson)
+      | map(
+          {
+            table: (
+              {
+                source_schema: env.DB_SCHEMA,
+                source_table: .table,
+                destination_catalog: env.TARGET_CATALOG,
+                destination_schema: env.TARGET_SCHEMA,
+                table_configuration: table_cfg(.mode)
+              } | with_src_catalog
+            )
+          }
+        )
+    )
+')"
+export IG_OBJECTS_JSON
+
+# cdc / icdc (cdc_single_pipeline): gateway or direct CDC connection
+ig_cdc_spec="$(jq -n '
   {
     name: env.INGESTION_PIPELINE_NAME,
     continuous: env.INGESTION_PIPELINE_CONTINUOUS,
@@ -348,32 +349,7 @@ ig_cdc_spec="$(jq -n '
     schema: env.TARGET_SCHEMA,
     ingestion_definition: {
       source_type: env.SOURCE_TYPE,
-      objects: (
-        if env.CDC_CT_MODE == "NONE" then
-          [
-            {
-              schema: (
-                {
-                  source_schema: env.DB_SCHEMA_SCH,
-                  destination_catalog: env.TARGET_CATALOG,
-                  destination_schema: env.TARGET_SCHEMA,
-                  table_configuration: (
-                    if env.SCD_TYPE != "" then {scd_type: env.SCD_TYPE} else {} end
-                  )
-                }
-                | (if env.SOURCE_TYPE != "MYSQL" then . + {source_catalog: env.DB_CATALOG} else . end)
-              )
-            }
-          ]
-        else
-          (if (env.CDC_CT_MODE == "CT" or env.CDC_CT_MODE == "BOTH") then
-             [maybe_table("intpk")]
-           else [] end)
-          + (if (env.CDC_CT_MODE == "CDC" or env.CDC_CT_MODE == "BOTH") then
-             [maybe_table("dtix"), maybe_table("strpk")]
-           else [] end)
-        end
-      )
+      objects: (env.IG_OBJECTS_JSON | fromjson)
     }
   }
   | (if env.CDC_QBC == "cdc" then
@@ -412,7 +388,7 @@ ig_cdc_spec="$(jq -n '
           name: ("ingestion_elog_" + ((env.INGESTION_PIPELINE_ID // "") | gsub("-"; "_")))
         }
       } else . end)
-  | (if env.CDC_QBC == "cdc_single_pipeline" then
+  | (if (env.CDC_QBC == "cdc_single_pipeline" or env.CDC_QBC == "icdc") then
        if env.COMPUTE_INGEST == "serverless" then . + {serverless: true}
        else . + {serverless: false} end
      elif env.COMPUTE_INGEST == "serverless" then . + {serverless: true}
@@ -420,18 +396,8 @@ ig_cdc_spec="$(jq -n '
      else . end)
 ')"
 
-# qbc_fcon: query-based ingestion from DB_SCHEMA. Tables from TABLE_SCD_TYPE qbc_fcon: entries (default intpk+strpk+dtix).
+# qbc_fcon: query-based from connection (same dual-schema objects)
 ig_qbc_fcon_spec="$(jq -n '
-  def table_cfg(mode):
-    if mode == "scd_type1" then
-      {scd_type: "SCD_TYPE_1", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
-    elif mode == "scd_type2" then
-      {scd_type: "SCD_TYPE_2", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
-    elif mode == "append_only" then
-      {scd_type: "APPEND_ONLY", query_based_connector_config: {cursor_columns: ["dt"]}}
-    else
-      {scd_type: "SCD_TYPE_1", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
-    end;
   {
     name: env.INGESTION_PIPELINE_NAME,
     continuous: false,
@@ -441,23 +407,7 @@ ig_qbc_fcon_spec="$(jq -n '
     ingestion_definition: {
       connection_name: env.CONNECTION_NAME,
       source_type: env.SOURCE_TYPE,
-      objects: (
-        (env.QBC_FCON_TABLE_SCD_JSON | fromjson)
-        | map(
-            {
-              table: (
-                {
-                  source_schema: env.DB_SCHEMA,
-                  source_table: .table,
-                  destination_catalog: env.TARGET_CATALOG,
-                  destination_schema: env.TARGET_SCHEMA,
-                  table_configuration: table_cfg(.mode)
-                }
-                | (if env.SOURCE_TYPE != "MYSQL" then . + {source_catalog: env.DB_CATALOG} else . end)
-              )
-            }
-          )
-      )
+      objects: (env.IG_OBJECTS_JSON | fromjson)
     }
   }
   | (if env.PUBLISH_EVENT_LOG != "" then . + {
@@ -472,20 +422,8 @@ ig_qbc_fcon_spec="$(jq -n '
      else . end)
 ')"
 
-# qbc_fc: foreign catalog ingestion (no connection_name; ingest_from_uc_foreign_catalog).
-# Direct from foreign catalog (no gateway); continuous is not supported.
-# Always includes schema-level object (DB_SCHEMA_SCH / *_sch tables) + table-level SCD objects (DB_SCHEMA).
+# qbc_fc: foreign catalog (same dual-schema objects; source_catalog already set)
 ig_qbc_fc_spec="$(jq -n '
-  def table_cfg(mode):
-    if mode == "scd_type1" then
-      {scd_type: "SCD_TYPE_1", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
-    elif mode == "scd_type2" then
-      {scd_type: "SCD_TYPE_2", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
-    elif mode == "append_only" then
-      {scd_type: "APPEND_ONLY", query_based_connector_config: {cursor_columns: ["dt"]}}
-    else
-      {scd_type: "SCD_TYPE_1", primary_keys: ["pk"], query_based_connector_config: {cursor_columns: ["dt"]}}
-    end;
   {
     name: env.INGESTION_PIPELINE_NAME,
     continuous: false,
@@ -495,33 +433,7 @@ ig_qbc_fc_spec="$(jq -n '
     ingestion_definition: {
       ingest_from_uc_foreign_catalog: true,
       source_type: "FOREIGN_CATALOG",
-      objects: (
-        [
-          {
-            schema: {
-              source_catalog: env.FOREIGN_CATALOG_NAME,
-              source_schema: env.DB_SCHEMA_SCH,
-              destination_catalog: env.TARGET_CATALOG,
-              destination_schema: env.TARGET_SCHEMA
-            }
-          }
-        ]
-        + (
-            (env.QBC_FC_TABLE_SCD_JSON | fromjson)
-            | map(
-                {
-                  table: {
-                    source_catalog: env.FOREIGN_CATALOG_NAME,
-                    source_schema: env.DB_SCHEMA,
-                    source_table: .table,
-                    destination_catalog: env.TARGET_CATALOG,
-                    destination_schema: env.TARGET_SCHEMA,
-                    table_configuration: table_cfg(.mode)
-                  }
-                }
-              )
-          )
-      )
+      objects: (env.IG_OBJECTS_JSON | fromjson)
     }
   }
   | (if env.PUBLISH_EVENT_LOG != "" then . + {
@@ -538,28 +450,23 @@ ig_qbc_fc_spec="$(jq -n '
 
 INGESTION_EVENT_LOG="event_log_${INGESTION_PIPELINE_NAME}"
 
+echo "ingestion objects: schema ${DB_SCHEMA_SCH} + tables from ${DB_SCHEMA} ($(echo "${TABLE_SCD_ENTRIES_JSON}" | jq -c 'map(.table)')) → ${TARGET_SCHEMA}"
+
 case "${CDC_QBC}" in
-    "cdc"|"cdc_single_pipeline")
-        case "${CDC_CT_MODE}" in
-            "BOTH"|"CT"|"CDC"|"NONE") ;;
-            *)
-                echo "CDC_CT_MODE=${CDC_CT_MODE} must be BOTH|CT|CDC|NONE" >&2
-                return 1
-            ;;
-        esac
-        echo "creating ${CDC_QBC} ingestion pipeline (CDC_CT_MODE=${CDC_CT_MODE})"
+    "cdc"|"cdc_single_pipeline"|"icdc")
+        echo "creating ${CDC_QBC} ingestion pipeline"
         DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines create --json "$ig_cdc_spec"
     ;;
     "qbc_fcon")
-        echo "qbc_fcon: query-based ingestion from ${DB_SCHEMA} (default intpk+strpk+dtix append_only)"
+        echo "creating qbc_fcon ingestion pipeline"
         DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines create --json "$ig_qbc_fcon_spec"
     ;;
     "qbc_fc")
-        echo "qbc_fc: schema ingest ${DB_SCHEMA_SCH} (*_sch) + table SCD from ${DB_SCHEMA} → ${TARGET_SCHEMA}"
+        echo "creating qbc_fc ingestion pipeline"
         DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines create --json "$ig_qbc_fc_spec"
     ;;
     *)
-        echo "CDC_QBC=${CDC_QBC} must be cdc|qbc_fcon|qbc_fc|cdc_single_pipeline"
+        echo "CDC_QBC=${CDC_QBC} must be cdc|qbc_fcon|qbc_fc|cdc_single_pipeline|icdc"
         return 1
     ;;
 esac

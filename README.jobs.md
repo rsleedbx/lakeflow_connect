@@ -1,17 +1,13 @@
-How to control `jobs` that clean up resources created
+How to tear down demo resources
 
-- show jobs
-```
-jobs
-```
+Use the manual delete script (dry-run by default):
 
-```
-jobs
-[6]-  Running                 nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks schemas delete --force "$TARGET_CATALOG.$TARGET_SCHEMA" >> ~/nohup.out 2>&1 &
-[7]+  Running                 nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && databricks schemas delete --force "$STAGING_CATALOG.$STAGING_SCHEMA" >> ~/nohup.out 2>&1 &
+```bash
+./06_manual_delete.sh
+./06_manual_delete.sh --apply
+./06_manual_delete.sh --id 6a7f8a18 --apply
 ```
 
-- cancel jobs
-```
-kill %6
-```
+Order on `--apply`: load generator → jobs → pipelines → Postgres slots/pubs → UC schemas.
+
+There is no deferred `nohup sleep … delete` background job from `03` anymore.

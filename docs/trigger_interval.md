@@ -16,8 +16,6 @@ only the first pipeline creates CDC, the rest do not
 
 ```
 export DELETE_DB_AFTER_SLEEP='480m'
-export STOP_AFTER_SLEEP='300m'
-export DELETE_PIPELINES_AFTER_SLEEP='300m'
 . ./00_lakeflow_connect_env.sh
 . ./sqlserver/01_azure_sqlserver.sh 
 . ./sqlserver/02_sqlserver_configure.sh 
@@ -36,4 +34,7 @@ for interval in 3 5 15 30 60 120; do
   fi
   . ./03_lakeflow_connect_demo.sh 
 done
+
+# Tear down demo objects when finished:
+# ./06_manual_delete.sh --apply
 ```

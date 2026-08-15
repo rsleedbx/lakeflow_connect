@@ -9,11 +9,6 @@ if [ "$0" == "$BASH_SOURCE" ]; then
   exit 1
 fi
 
-# stop the resource after this 1s 1m 1h ...
-export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"20m"}
-# uncomment if delete is also desired.  
-# Tag will also be created to ensure delete happens via automation in the cloud
-# export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"120m"}
 # make unique schema, pipelines, job
 NINE_CHAR_ID=$(date +%s | xargs printf "%08x\n") # number of seconds since epoch in hex
 export NINE_CHAR_ID
@@ -59,7 +54,6 @@ case "${COMPUTE_INGEST}" in
 esac
 export GATEWAY_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${SOURCE_TYPE}_${PIPELINE_TYPE_TAG}_${GATEWAY_COMPUTE_TAG}_GW
 export INGESTION_PIPELINE_NAME=${WHOAMI}_${NINE_CHAR_ID}_${SOURCE_TYPE}_${PIPELINE_TYPE_TAG}_${INGEST_COMPUTE_TAG}_IG
-export CLEANUP_JOB_NAME=${WHOAMI}_${NINE_CHAR_ID}_cleanup
 # used for the pipelines — default catalog from workspace settings when unset
 if [[ -z "${TARGET_CATALOG:-}" ]]; then
     TARGET_CATALOG="$(resolve_default_uc_catalog)"
@@ -77,17 +71,6 @@ export ELOG_SCHEMA=${ELOG_SCHEMA:-${WHOAMI}}
 export DB_SCHEMA_SCH="${DB_SCHEMA_SCH:-${DB_SCHEMA}_sch}"
 # check access to SQL Server
 
-function cleanup() {
-    if [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
-        if [[ -n "${STATE[foreign_catalog_created]:-}" ]]; then
-            CLEANUP nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DBX catalogs delete "${FOREIGN_CATALOG_NAME:-$CONNECTION_NAME}" >> ~/nohup.out 2>&1 &
-            CLEANUP echo -e "\nDeleting foreign catalog ${FOREIGN_CATALOG_NAME:-$CONNECTION_NAME} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n"
-        fi
-        CLEANUP nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DBX connections delete "$CONNECTION_NAME" >> ~/nohup.out 2>&1 &
-        CLEANUP echo -e "\nDeleting connection ${CONNECTION_NAME} after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $! \n" 
-    fi
-}
-
 # #############################################################################
 
 echo -e "\nCreate target and staging schemas"
@@ -97,28 +80,12 @@ if ! DBX schemas get "$ELOG_CATALOG.$ELOG_SCHEMA"; then
     DB_EXIT_ON_ERROR="PRINT_EXIT" DBX schemas create "$ELOG_SCHEMA" "$ELOG_CATALOG"
 fi
 
-export TARGET_CATALOG_SCHEMA_CREATED=""
 if ! DBX schemas get "$TARGET_CATALOG.$TARGET_SCHEMA"; then
-
     DB_EXIT_ON_ERROR="PRINT_EXIT" DBX schemas create "$TARGET_SCHEMA" "$TARGET_CATALOG"
-
-    if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        :
-        export TARGET_CATALOG_SCHEMA_CREATED=1
-        #CLEANUP nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$TARGET_CATALOG.$TARGET_SCHEMA" >> ~/nohup.out 2>&1 &
-    fi
 fi
 
-export STAGE_CATALOG_SCHEMA_CREATED=""
 if [[ "$TARGET_CATALOG.$TARGET_SCHEMA" != "$STAGING_CATALOG.$STAGING_SCHEMA" ]] && ! DBX schemas get "$STAGING_CATALOG.$STAGING_SCHEMA"; then
-
     DB_EXIT_ON_ERROR="PRINT_EXIT" DBX schemas create "$STAGING_SCHEMA" "$STAGING_CATALOG"
-
-    if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        :
-        export STAGE_CATALOG_SCHEMA_CREATED=1
-        #CLEANUP nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX schemas delete --force "$STAGING_CATALOG.$STAGING_SCHEMA" >> ~/nohup.out 2>&1 &
-    fi
 fi
 
 # #############################################################################
@@ -205,18 +172,6 @@ if [[ "$CDC_QBC" == "cdc" ]]; then
 
     GATEWAY_PIPELINE_ID="$(jq -r '.pipeline_id' /tmp/dbx_stdout.$$)"
     export GATEWAY_PIPELINE_ID
-
-    if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-        :
-        #CLEANUP nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$GATEWAY_PIPELINE_ID">> ~/nohup.out 2>&1 &
-        nohup sleep "${STOP_AFTER_SLEEP}" && db_replication_cleanup "$GATEWAY_PIPELINE_ID">> ~/nohup.out 2>&1 &
-    fi
-
-    if [[ -z "${STOP_AFTER_SLEEP}" ]] && [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        :
-        #CLEANUP nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$GATEWAY_PIPELINE_ID"  >> ~/nohup.out 2>&1 &
-        nohup sleep "${STOP_AFTER_SLEEP}" && db_replication_cleanup "$GATEWAY_PIPELINE_ID">> ~/nohup.out 2>&1 &
-    fi
 else
     echo "CDC_QBC=${CDC_QBC}: skipping separate gateway pipeline (direct-from-connection ingestion)"
     export GATEWAY_PIPELINE_ID=""
@@ -426,15 +381,6 @@ DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines create --json "$ig_spec"
 INGESTION_PIPELINE_ID=$(jq -r '.pipeline_id' /tmp/dbx_stdout.$$)
 export INGESTION_PIPELINE_ID
 
-if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    :
-    #CLEANUP nohup sleep "${STOP_AFTER_SLEEP}" && DBX pipelines stop "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
-fi
-if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    :
-    #CLEANUP nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX pipelines delete "$INGESTION_PIPELINE_ID" >> ~/nohup.out 2>&1 &
-fi
-
 # start if not cont
 if [[ "$INGESTION_PIPELINE_CONTINUOUS" == "false" ]]; then 
     DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines start-update "$INGESTION_PIPELINE_ID"
@@ -485,17 +431,6 @@ DB_EXIT_ON_ERROR="PRINT_EXIT" DBX jobs create --json "$jobs_spec"
 
 INGESTION_JOB_ID=$(jq -r '.job_id' /tmp/dbx_stdout.$$)
 export INGESTION_JOB_ID
-
-# print UI URL
-if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    :
-    #CLEANUP nohup sleep "${STOP_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
-fi
-if [[ -z "${STOP_AFTER_SLEEP}" ]] && [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    :
-    #CLEANUP nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && DBX jobs delete "$INGESTION_JOB_ID" >> ~/nohup.out 2>&1 &
-fi
-
 
 # #############################################################################
 
@@ -558,87 +493,14 @@ else
 fi
 
 if [[ "$_lg_started" -eq 1 ]]; then
-    if [[ -n "${STOP_AFTER_SLEEP}" ]]; then
-        nohup sleep "${STOP_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
-    fi
-    if [[ -z "${STOP_AFTER_SLEEP}" ]] && [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-        nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && kill -9 "$LOAD_GENERATOR_PID" >> ~/nohup.out 2>&1 &
-    fi
-    echo "Load Generator: started with PID=$LOAD_GENERATOR_PID."
+    echo "${LOAD_GENERATOR_PID}" > "/tmp/lfc_load_generator_${WHOAMI}.pid"
+    echo "Load Generator: started with PID=$LOAD_GENERATOR_PID (pid file /tmp/lfc_load_generator_${WHOAMI}.pid)."
     echo ""
+elif [[ -n "${LOAD_GENERATOR_PID:-}" ]] && kill -0 "$LOAD_GENERATOR_PID" 2>/dev/null; then
+    echo "${LOAD_GENERATOR_PID}" > "/tmp/lfc_load_generator_${WHOAMI}.pid"
 fi
 unset _lg_started
 
-
-# #############################################################################
-
-echo -e "\n Cleanup job - only show up in Runs UI Interface"
-echo -e    "----------------------------------------------\n"
-
-if ! DBX workspace list $DBX_WORKSPACE_PATH/copy_event_log.ipynb; then
-    DBX workspace mkdirs $DBX_WORKSPACE_PATH
-    if [[ -f ./bin/copy_event_log.ipynb ]]; then
-        DBX workspace import $DBX_WORKSPACE_PATH/copy_event_log.ipynb --file ./bin/copy_event_log.ipynb --language PYTHON --format JUPYTER --overwrite
-    else
-        wget -qO- https://raw.githubusercontent.com/rsleedbx/lakeflow_connect/refs/heads/main/bin/copy_event_log.ipynb > /tmp/copy_event_log.ipynb.$$
-        DBX workspace import $DBX_WORKSPACE_PATH/copy_event_log.ipynb --file /tmp/copy_event_log.ipynb.$$ --language PYTHON --format JUPYTER --overwrite
-    fi
-fi
-
-get_cleanup_job_json() {
-    local ACTION_NAME=${1:-stop}
-    local CONNECTION_NAME_FOR_CLEANUP=${CONNECTION_NAME}
-
-    if [[ -z "$DELETE_DB_AFTER_SLEEP" ]] && [[ -z "${STATE[connection_created]}" ]]; then
-        CONNECTION_NAME_FOR_CLEANUP=""
-    fi
-
-    ACTION_NAME="$ACTION_NAME" \
-    CONNECTION_NAME="$CONNECTION_NAME_FOR_CLEANUP" \
-    CONNECTION_CREATED="${STATE[connection_created]:-}" \
-    STAGE_CATALOG_SCHEMA_CREATED="${STAGE_CATALOG_SCHEMA_CREATED:-}" \
-    TARGET_CATALOG_SCHEMA_CREATED="${TARGET_CATALOG_SCHEMA_CREATED:-}" \
-    jq -n '
-      {
-        name: env.CLEANUP_JOB_NAME,
-        tasks: [{
-          task_key: "my_notebook_task",
-          notebook_task: {
-            notebook_path: (env.DBX_WORKSPACE_PATH + "/copy_event_log.ipynb"),
-            base_parameters: {
-              action_name: env.ACTION_NAME,
-              connection_name: (env.CONNECTION_NAME // ""),
-              gateway_pipeline_name: env.GATEWAY_PIPELINE_NAME,
-              gateway_pipeline_id: env.GATEWAY_PIPELINE_ID,
-              ingestion_pipeline_name: env.INGESTION_PIPELINE_NAME,
-              ingestion_pipeline_id: env.INGESTION_PIPELINE_ID,
-              target_catalog: env.TARGET_CATALOG,
-              target_schema: env.TARGET_SCHEMA,
-              stage_catalog: env.STAGING_CATALOG,
-              stage_schema: env.STAGING_SCHEMA,
-              elog_catalog: env.ELOG_CATALOG,
-              elog_schema: env.ELOG_SCHEMA,
-              job_name: env.INGESTION_PIPELINE_NAME,
-              job_id: env.INGESTION_JOB_ID,
-              stage_created: (env.STAGE_CATALOG_SCHEMA_CREATED // ""),
-              target_created: (env.TARGET_CATALOG_SCHEMA_CREATED // ""),
-              connection_created: (env.CONNECTION_CREATED // "")
-            },
-            compute_spec: {kind: "serverless"}
-          }
-        }]
-      }
-    '
-}
-
-if [[ -n "${STOP_AFTER_SLEEP}" ]]; then 
-    nohup sleep "${STOP_AFTER_SLEEP}" && \
-        DBX jobs submit --run-name "${CLEANUP_JOB_NAME}_stop" --no-wait --json "$(get_cleanup_job_json stop)" >> ~/nohup.out 2>&1 &
-fi
-if [[ -n "${DELETE_PIPELINES_AFTER_SLEEP}" ]]; then
-    nohup sleep "${DELETE_PIPELINES_AFTER_SLEEP}" && \
-        DBX jobs submit --run-name "${CLEANUP_JOB_NAME}_delete" --no-wait --json "$(get_cleanup_job_json delete)" >> ~/nohup.out 2>&1 &
-fi
 
 # #############################################################################
 
@@ -652,7 +514,8 @@ echo -e "Connection    : ${DATABRICKS_HOST_NAME}/explore/connections/${CONNECTIO
 if [[ "${CDC_QBC}" == "qbc_fc" ]]; then
     echo -e "Foreign catalog: ${DATABRICKS_HOST_NAME}/explore/data/${FOREIGN_CATALOG_NAME}"
 fi
-echo -e "Job           : ${DATABRICKS_HOST_NAME}/jobs/$INGESTION_JOB_ID \n"   
+echo -e "Job           : ${DATABRICKS_HOST_NAME}/jobs/$INGESTION_JOB_ID \n"
+echo -e "Teardown      : ./06_manual_delete.sh --id ${NINE_CHAR_ID}   # dry-run; add --apply to delete\n"
 
 DB_EXIT_ON_ERROR="PRINT_EXIT" DBX pipelines list-pipelines --filter "name like '${WHOAMI}_%'"
 jq --arg url "$DATABRICKS_HOST_NAME" -r 'sort_by(.name) | .[] | [ .name, .pipeline_id, .state, ($url + "/pipelines/" + .pipeline_id) ] | @tsv' /tmp/dbx_stdout.$$ 

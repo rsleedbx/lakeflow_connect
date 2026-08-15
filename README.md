@@ -323,21 +323,18 @@ export DELETE_DB_AFTER_SLEEP=""
 ```
 
 
-## `DELETE_PIPELINES_AFTER_SLEEP=137m`
+## Manual teardown (`06_manual_delete.sh`)
 
-
-The default is to delete the pipeline objects (gateway, ingestion, jobs) the script creates after this many minutes. 
-- To not delete, make it `DELETE_PIPELINES_AFTER_SLEEP=""`
-- To change the time, make it `DELETE_PIPELINES_AFTER_SLEEP="67m"` for example.
-
-
-Example usage:
-
+Demo pipelines, jobs, UC schemas, Postgres slots/publications, and the load generator are **not** auto-deleted. Tear them down with:
 
 ```bash
-export DELETE_PIPELINES_AFTER_SLEEP=""
-. ./00_lakeflow_connect_env.sh
+./06_manual_delete.sh                 # dry-run: list matching objects
+./06_manual_delete.sh --apply         # kill load gen, then delete jobs → pipelines → PG slots/pubs → schemas
+./06_manual_delete.sh --id 6a7f8a18   # narrow to one NINE_CHAR_ID from 03
+./06_manual_delete.sh --id 6a7f8a18 --apply
 ```
+
+Match pattern: `${WHOAMI}_<8-hex-id>_<SOURCE_TYPE|CONNECTION_TYPE>_…` (e.g. MYSQL demos are not matched when the shell is set to POSTGRESQL). Connections / foreign catalogs / cloud DB resources are out of scope (see `DELETE_DB_AFTER_SLEEP` above for optional connection cleanup).
 
 
 ## `DATABRICKS_CONFIG_PROFILE=DEFAULT`

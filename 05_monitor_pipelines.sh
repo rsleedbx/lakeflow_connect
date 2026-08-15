@@ -8,9 +8,12 @@
 #   ./05_monitor_pipelines.sh --json
 #
 # Match: ^${WHOAMI}_[0-9a-f]{8}(_|$)
-# Stats from pipelines events API details.flow_progress.metrics
-#   (num_deleted_rows / num_upserted_rows / num_output_bytes /
-#    backlog_bytes / backlog_records / backlog_files / backlog_seconds)
+# Public REST only: GET /api/2.0/pipelines/{id}/events (INFO/WARN/ERROR).
+# METRICS-level events (UI "Output records" for many ICDC flows) are omitted by
+# the public API — this script reports INFO metrics + flow status + operation_progress.
+# Stats from details.flow_progress.metrics when present:
+#   num_output_rows / num_deleted_rows / num_upserted_rows / num_output_bytes /
+#   backlog_bytes / backlog_records / backlog_files / backlog_seconds
 
 set -u
 
@@ -19,10 +22,10 @@ _UPDATES=3
 _JSON=0
 _LFC_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _MAX_EVENT_PAGES=5
-_EVENTS_PAGE_SIZE=100
+_EVENTS_PAGE_SIZE=200
 
 usage() {
-  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -129,8 +132,9 @@ fetch_updates_json() {
     /tmp/dbx_stdout.$$
 }
 
-# Collect flow_progress metrics + error events via raw API; page up to cap.
+# Collect flow_progress / operation_progress / error events via raw API; page up to cap.
 # Writes JSON array to outfile (avoids ARG_MAX from --argjson with large payloads).
+# Public REST returns INFO/WARN/ERROR only (no METRICS-level row counters).
 fetch_metric_events_json() {
   local pid="$1"
   local outfile="$2"
@@ -150,10 +154,10 @@ fetch_metric_events_json() {
       break
     fi
     jq '[.events[]? | select(
-        (.event_type == "flow_progress" and .details.flow_progress.metrics != null)
+        .event_type == "flow_progress"
+        or .event_type == "operation_progress"
         or .level == "ERROR"
         or (.details.update_progress.state // "") == "FAILED"
-        or ((.details.flow_progress.status // "") | test("FAILED"; "i"))
       )]' /tmp/dbx_stdout.$$ >"${page_file}"
     jq -s 'add' "${outfile}" "${page_file}" >"${outfile}.n" \
       && mv "${outfile}.n" "${outfile}"
@@ -186,15 +190,25 @@ build_pipeline_report() {
     ($updates_raw[0] | if type=="array" then {updates:.} else . end | .updates // []) as $updates
     | ($events[0] // []) as $events
     |
+    def activity:
+      .num_deleted_rows + .num_upserted_rows + .num_output_rows + .num_output_bytes +
+      .backlog_bytes + .backlog_records + .backlog_files + .backlog_seconds;
+
     # latest metrics event per (update_id, flow_name) — metrics-bearing only
     def flow_rows:
       ($events
-        | map(select(.details.flow_progress.metrics != null))
+        | map(select(
+            .event_type == "flow_progress"
+            and .details.flow_progress.metrics != null
+            and ((.details.flow_progress.metrics | type) == "object")
+            and ((.details.flow_progress.metrics | length) > 0)
+          ))
         | map({
             update_id: .origin.update_id,
             flow: (.origin.flow_name // "unknown"),
             ts: .timestamp,
             status: (.details.flow_progress.status // ""),
+            num_output_rows: (.details.flow_progress.metrics.num_output_rows // 0),
             num_deleted_rows: (.details.flow_progress.metrics.num_deleted_rows // 0),
             num_upserted_rows: (.details.flow_progress.metrics.num_upserted_rows // 0),
             num_output_bytes: (.details.flow_progress.metrics.num_output_bytes // 0),
@@ -206,15 +220,27 @@ build_pipeline_report() {
         | group_by([.update_id, .flow])
         | map(
             # Prefer highest activity; tie-break by latest timestamp
-            sort_by([(
-              .num_deleted_rows + .num_upserted_rows + .num_output_bytes +
-              .backlog_bytes + .backlog_records + .backlog_files + .backlog_seconds
-            ), .ts]) | last
+            sort_by([activity, .ts]) | last
           )
+        | map(select(activity > 0))
+      );
+
+    # latest flow_progress.status per (update_id, flow)
+    def flow_statuses:
+      ($events
         | map(select(
-            .num_deleted_rows + .num_upserted_rows + .num_output_bytes +
-            .backlog_bytes + .backlog_records + .backlog_files + .backlog_seconds > 0
+            .event_type == "flow_progress"
+            and (.origin.flow_name // "") != ""
+            and (.details.flow_progress.status // "") != ""
           ))
+        | map({
+            update_id: .origin.update_id,
+            flow: .origin.flow_name,
+            ts: .timestamp,
+            status: .details.flow_progress.status
+          })
+        | group_by([.update_id, .flow])
+        | map(sort_by(.ts) | last)
       );
 
     def truncate_msg($s):
@@ -235,11 +261,40 @@ build_pipeline_report() {
         )
       | truncate_msg(.);
 
+    def ops_for($uid):
+      ($events
+        | map(select(
+            (.origin.update_id // .origin.request_id // "") == $uid
+            and .event_type == "operation_progress"
+            and .details.operation_progress != null
+          ))
+        | map(.details.operation_progress as $op | {
+            ts: .timestamp,
+            type: ($op.type // ""),
+            status: ($op.status // ""),
+            cdc_discovery_latency_ms: (
+              $op.direct_cdc_extraction_completion.cdc_discovery_latency_ms
+              // $op.cdc_discovery_latency_ms
+              // null
+            ),
+            pending_snapshots: (
+              $op.direct_cdc_extraction_completion.pending_snapshots
+              // null
+            )
+          })
+        | map(select(.type != ""))
+        | group_by(.type)
+        | map(sort_by(.ts) | last)
+        | map({type, status, cdc_discovery_latency_ms, pending_snapshots})
+      );
+
     def stats_for($uid):
       (flow_rows | map(select(.update_id == $uid))) as $flows
+      | (flow_statuses | map(select(.update_id == $uid) | {flow, status})) as $statuses
       | {
           flows: ($flows | map({
             flow,
+            num_output_rows,
             num_deleted_rows,
             num_upserted_rows,
             num_output_bytes,
@@ -248,7 +303,10 @@ build_pipeline_report() {
             backlog_files,
             backlog_seconds
           })),
+          flow_statuses: $statuses,
+          operations: ops_for($uid),
           total: {
+            num_output_rows: ($flows | map(.num_output_rows) | add // 0),
             num_deleted_rows: ($flows | map(.num_deleted_rows) | add // 0),
             num_upserted_rows: ($flows | map(.num_upserted_rows) | add // 0),
             num_output_bytes: ($flows | map(.num_output_bytes) | add // 0),
@@ -342,20 +400,21 @@ for ((_i = 0; _i < _np_report; _i++)); do
 
     _nf="$(jq --argjson i "${_i}" --argjson j "${_j}" \
       '.[$i].updates[$j].flows | length' "${_TMP_REPORT}")"
-    if [[ "${_nf}" -eq 0 ]]; then
-      # Prefer failure error over empty-metrics placeholder
-      if [[ "${_failed}" -eq 0 || -z "${_uerr}" ]]; then
-        echo "  (no flow_progress metrics in recent events)"
-      fi
-    else
+    _ns="$(jq --argjson i "${_i}" --argjson j "${_j}" \
+      '.[$i].updates[$j].flow_statuses | length' "${_TMP_REPORT}")"
+    _nop="$(jq --argjson i "${_i}" --argjson j "${_j}" \
+      '.[$i].updates[$j].operations | length' "${_TMP_REPORT}")"
+
+    if [[ "${_nf}" -gt 0 ]]; then
       # TSV -> column -t so adjacent zeros cannot render as "00" from tab stops
       jq -r --argjson i "${_i}" --argjson j "${_j}" '
         .[$i].updates[$j] |
         (
-          ["flow", "num_deleted_rows", "num_upserted_rows", "num_output_bytes",
+          ["flow", "num_output_rows", "num_deleted_rows", "num_upserted_rows", "num_output_bytes",
            "backlog_bytes", "backlog_records", "backlog_files", "backlog_seconds"],
           (.flows[] | [
             .flow,
+            .num_output_rows,
             .num_deleted_rows,
             .num_upserted_rows,
             .num_output_bytes,
@@ -365,6 +424,7 @@ for ((_i = 0; _i < _np_report; _i++)); do
             .backlog_seconds
           ]),
           ["TOTAL",
+           .total.num_output_rows,
            .total.num_deleted_rows,
            .total.num_upserted_rows,
            .total.num_output_bytes,
@@ -374,6 +434,27 @@ for ((_i = 0; _i < _np_report; _i++)); do
            .total.backlog_seconds]
         ) | @tsv
       ' "${_TMP_REPORT}" | column -t | sed 's/^/  /'
+    elif [[ "${_ns}" -gt 0 ]]; then
+      jq -r --argjson i "${_i}" --argjson j "${_j}" '
+        .[$i].updates[$j] |
+        (
+          ["flow", "status"],
+          (.flow_statuses[] | [.flow, .status])
+        ) | @tsv
+      ' "${_TMP_REPORT}" | column -t | sed 's/^/  /'
+    elif [[ "${_failed}" -eq 0 || -z "${_uerr}" ]]; then
+      echo "  (no flow_progress metrics or status in recent INFO events)"
+    fi
+
+    if [[ "${_nop}" -gt 0 ]]; then
+      jq -r --argjson i "${_i}" --argjson j "${_j}" '
+        .[$i].updates[$j].operations[] |
+        (
+          "  op  \(.type)  status=\(.status)"
+          + (if .cdc_discovery_latency_ms != null then "  cdc_discovery_latency_ms=\(.cdc_discovery_latency_ms)" else "" end)
+          + (if .pending_snapshots != null then "  pending_snapshots=\(.pending_snapshots)" else "" end)
+        )
+      ' "${_TMP_REPORT}"
     fi
     echo
   done

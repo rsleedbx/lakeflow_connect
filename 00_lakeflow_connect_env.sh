@@ -107,19 +107,9 @@ if ! declare -p JOBS_PERFORMANCE_MODE &> /dev/null; then
 export JOBS_PERFORMANCE_MODE=${JOBS_PERFORMANCE_MODE:-"STANDARD"}      # PERFORMANCE_OPTIMIZED | STANDARD
 fi
 
-# stop after sleep
-if ! declare -p STOP_AFTER_SLEEP &> /dev/null; then
-export STOP_AFTER_SLEEP=${STOP_AFTER_SLEEP:-"480m"}      # blank is do not stop
-fi
-
 # delete database after sleep
 if ! declare -p DELETE_DB_AFTER_SLEEP &> /dev/null; then
 export DELETE_DB_AFTER_SLEEP=${DELETE_DB_AFTER_SLEEP:-"480m"}    # blank is do not delete
-fi
-
-# delete lakeflow objects after sleep 
-if ! declare -p DELETE_PIPELINES_AFTER_SLEEP &> /dev/null; then
-export DELETE_PIPELINES_AFTER_SLEEP=${DELETE_PIPELINES_AFTER_SLEEP:-"120m"}  # blank is do not delete
 fi
 
 # save credentials in secrets so that password reset won't be required

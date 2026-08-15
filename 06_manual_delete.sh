@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Delete Databricks demo objects matching ${WHOAMI}_<8-hex-id> from 03 naming,
-# and matching Postgres per-pipeline slots/publications (${WHOAMI}_<hex8> / _pub).
+# Delete Databricks demo objects matching ${WHOAMI}_<8-hex-id>_${ENGINE}_… from 03 naming,
+# matching Postgres per-pipeline slots/publications for those ids (${WHOAMI}_<hex8> / _pub),
+# and the load generator (PID file /tmp/lfc_load_generator_${WHOAMI}.pid).
 #
 # Usage:
 #   ./06_manual_delete.sh              # dry-run (default): list only
-#   ./06_manual_delete.sh --apply      # delete jobs, pipelines, PG slots/pubs, schemas
+#   ./06_manual_delete.sh --apply      # kill load gen, then jobs, pipelines, PG slots/pubs, schemas
 #   ./06_manual_delete.sh --id 6a7f8a18
 #   ./06_manual_delete.sh --id 6a7f8a18 --apply
 #
-# Match: ^${WHOAMI}_[0-9a-f]{8}(_|$)
-# Scope: pipelines, jobs, UC schemas in TARGET_CATALOG, Postgres slots/pubs when configured.
+# Match: ^${WHOAMI}_[0-9a-f]{8}_${ENGINE}(_|$)  (ENGINE from SOURCE_TYPE / CONNECTION_TYPE)
+# Scope: load generator, pipelines, jobs, UC schemas in TARGET_CATALOG, Postgres slots/pubs when POSTGRESQL.
 # Out of scope: connections, foreign catalogs, ELOG_SCHEMA=${WHOAMI}, Azure resources.
 
 set -u
@@ -19,7 +20,7 @@ _ID=""
 _LFC_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -63,22 +64,26 @@ if [[ -z "${TARGET_CATALOG:-}" ]]; then
 fi
 export TARGET_CATALOG
 
-if [[ -n "${_ID}" ]]; then
-  _PREFIX="${WHOAMI}_${_ID}"
-  _NAME_RE="^${_PREFIX}(_|$)"
-else
-  _PREFIX="${WHOAMI}_"
-  _NAME_RE="^${WHOAMI}_[0-9a-f]{8}(_|$)"
-fi
-
 _ENGINE="${SOURCE_TYPE:-${CONNECTION_TYPE:-}}"
 _ENGINE="${_ENGINE^^}"
+if [[ -z "${_ENGINE}" ]]; then
+  echo "ERROR: SOURCE_TYPE or CONNECTION_TYPE must be set (e.g. MYSQL, POSTGRESQL, SQLSERVER)" >&2
+  kill -INT $$
+fi
+
+if [[ -n "${_ID}" ]]; then
+  _PREFIX="${WHOAMI}_${_ID}_${_ENGINE}"
+  _NAME_RE="^${WHOAMI}_${_ID}_${_ENGINE}(_|$)"
+else
+  _PREFIX="${WHOAMI}_"
+  _NAME_RE="^${WHOAMI}_[0-9a-f]{8}_${_ENGINE}(_|$)"
+fi
 
 echo "Profile       : ${DATABRICKS_CONFIG_PROFILE}"
 echo "WHOAMI        : ${WHOAMI}"
 echo "TARGET_CATALOG: ${TARGET_CATALOG}"
+echo "Engine        : ${_ENGINE}"
 echo "Name pattern  : ${_NAME_RE}"
-echo "Engine        : ${_ENGINE:-unknown}"
 echo "Mode          : $([[ ${_APPLY} -eq 1 ]] && echo APPLY || echo DRY-RUN)"
 echo
 
@@ -171,16 +176,35 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Discover Postgres per-pipeline slots / publications
+# Discover Postgres per-pipeline slots / publications (ids from filtered pipelines)
 # ---------------------------------------------------------------------------
 echo '[]' >"${_TMP_PG_SLOTS}"
 echo '[]' >"${_TMP_PG_PUBS}"
 _pg_skip_reason=""
 
+# Hex8 ids from engine-filtered pipelines/jobs (schemas use same prefix)
+_allowed_ids="$(
+  {
+    jq -r --arg who "${WHOAMI}" '
+      .[]? | .name
+      | capture("^(?<p>" + $who + "_(?<id>[0-9a-f]{8}))_") | .id
+    ' "${_TMP_PIPELINES}"
+    jq -r --arg who "${WHOAMI}" '
+      .[]? | (.settings.name // .name // "")
+      | capture("^(?<p>" + $who + "_(?<id>[0-9a-f]{8}))_") | .id
+    ' "${_TMP_JOBS}"
+  } | sort -u
+)"
+if [[ -n "${_ID}" ]]; then
+  _allowed_ids="$(printf '%s\n%s\n' "${_allowed_ids}" "${_ID}" | sed '/^$/d' | sort -u)"
+fi
+
 if [[ "${_ENGINE}" != "POSTGRESQL" ]]; then
   _pg_skip_reason="engine is not POSTGRESQL"
 elif [[ -z "${DB_HOST_FQDN:-${DB_HOST:-}}" || -z "${DBA_USERNAME:-}" || -z "${DBA_PASSWORD:-}" ]]; then
   _pg_skip_reason="Postgres credentials not available"
+elif [[ -z "${_allowed_ids}" ]]; then
+  _pg_skip_reason="no matching pipeline/job ids for PG slot scope"
 else
   # Fresh process may never have sourced 01_*; map SQLCLI → PSQL (defined in 00).
   SQLCLI() { PSQL "${@}"; }
@@ -192,21 +216,21 @@ else
     # shellcheck source=postgres/02_postgres_configure.sh
     PG_CONFIGURE_MAIN=0 source "${_LFC_REPO_ROOT}/postgres/02_postgres_configure.sh" || true
   fi
+
+  # Query WHOAMI_* slots/pubs, then keep only allowed nine_char_ids
   _slot_re="^${WHOAMI}_[0-9a-f]{8}$"
   _pub_re="^${WHOAMI}_[0-9a-f]{8}_pub$"
-  if [[ -n "${_ID}" ]]; then
-    _slot_re="^${WHOAMI}_${_ID}$"
-    _pub_re="^${WHOAMI}_${_ID}_pub$"
-  fi
 
   if DB_EXIT_ON_ERROR="PRINT_RETURN" DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" \
     DB_CATALOG="${DB_CATALOG:-postgres}" SQLCLI -c \
     "SELECT slot_name FROM pg_replication_slots WHERE slot_name ~ '${_slot_re}' ORDER BY 1" </dev/null
   then
-    jq -R -s --arg who "${WHOAMI}" '
-      [split("\n")[] | select(length>0)
-       | capture("^(?<slot>" + $who + "_(?<id>[0-9a-f]{8}))$")
-       | {slot_name: .slot, nine_char_id: .id}]
+    jq -R -s --arg who "${WHOAMI}" --arg ids "$(echo "${_allowed_ids}" | tr '\n' ' ')" '
+      ($ids | split(" ") | map(select(length>0))) as $allow
+      | [split("\n")[] | select(length>0)
+         | capture("^(?<slot>" + $who + "_(?<id>[0-9a-f]{8}))$")
+         | select(.id as $i | $allow | index($i) != null)
+         | {slot_name: .slot, nine_char_id: .id}]
     ' /tmp/psql_stdout.$$ >"${_TMP_PG_SLOTS}"
   else
     _pg_skip_reason="could not query pg_replication_slots"
@@ -217,15 +241,31 @@ else
       DB_CATALOG="${DB_CATALOG:-postgres}" SQLCLI -c \
       "SELECT pubname FROM pg_publication WHERE pubname ~ '${_pub_re}' ORDER BY 1" </dev/null
     then
-      jq -R -s --arg who "${WHOAMI}" '
-        [split("\n")[] | select(length>0)
-         | capture("^(?<pub>" + $who + "_(?<id>[0-9a-f]{8})_pub)$")
-         | {publication_name: .pub, nine_char_id: .id}]
+      jq -R -s --arg who "${WHOAMI}" --arg ids "$(echo "${_allowed_ids}" | tr '\n' ' ')" '
+        ($ids | split(" ") | map(select(length>0))) as $allow
+        | [split("\n")[] | select(length>0)
+           | capture("^(?<pub>" + $who + "_(?<id>[0-9a-f]{8})_pub)$")
+           | select(.id as $i | $allow | index($i) != null)
+           | {publication_name: .pub, nine_char_id: .id}]
       ' /tmp/psql_stdout.$$ >"${_TMP_PG_PUBS}"
     else
       _pg_skip_reason="could not query pg_publication"
       echo '[]' >"${_TMP_PG_PUBS}"
     fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Discover load generator (env PID or /tmp/lfc_load_generator_${WHOAMI}.pid)
+# ---------------------------------------------------------------------------
+_LG_PID=""
+_LG_PID_FILE="/tmp/lfc_load_generator_${WHOAMI}.pid"
+if [[ -n "${LOAD_GENERATOR_PID:-}" ]] && kill -0 "${LOAD_GENERATOR_PID}" 2>/dev/null; then
+  _LG_PID="${LOAD_GENERATOR_PID}"
+elif [[ -f "${_LG_PID_FILE}" ]]; then
+  _cand="$(tr -d '[:space:]' <"${_LG_PID_FILE}" || true)"
+  if [[ -n "${_cand}" ]] && kill -0 "${_cand}" 2>/dev/null; then
+    _LG_PID="${_cand}"
   fi
 fi
 
@@ -238,6 +278,13 @@ _ns="$(jq 'length' "${_TMP_SCHEMAS}")"
 _nslot="$(jq 'length' "${_TMP_PG_SLOTS}")"
 _npub="$(jq 'length' "${_TMP_PG_PUBS}")"
 
+echo "Load generator:"
+if [[ -n "${_LG_PID}" ]]; then
+  echo "  pid  ${_LG_PID}  (file ${_LG_PID_FILE})"
+else
+  echo "  (none)"
+fi
+echo
 echo "Pipelines (${_np}):"
 if [[ "${_np}" -eq 0 ]]; then
   echo "  (none)"
@@ -289,13 +336,25 @@ if [[ "${_APPLY}" -eq 0 ]]; then
   kill -INT $$
 fi
 
-if [[ "${_np}" -eq 0 && "${_nj}" -eq 0 && "${_ns}" -eq 0 && "${_nslot}" -eq 0 && "${_npub}" -eq 0 ]]; then
+if [[ -z "${_LG_PID}" && "${_np}" -eq 0 && "${_nj}" -eq 0 && "${_ns}" -eq 0 && "${_nslot}" -eq 0 && "${_npub}" -eq 0 ]]; then
   echo "Nothing to delete."
   kill -INT $$
 fi
 
-echo "Applying deletes (jobs → pipelines → PG slots/pubs → schemas)..."
+echo "Applying deletes (load gen → jobs → pipelines → PG slots/pubs → schemas)..."
 echo
+
+# 0) Kill load generator first (stop DML before tearing down pipelines/slots)
+if [[ -n "${_LG_PID}" ]]; then
+  echo "load generator kill -9 ${_LG_PID}"
+  if ! kill -9 "${_LG_PID}" 2>/dev/null; then
+    echo "  WARN: load generator kill failed (continuing)" >&2
+    _FAILS=$((_FAILS + 1))
+  fi
+  rm -f "${_LG_PID_FILE}"
+elif [[ -f "${_LG_PID_FILE}" ]]; then
+  rm -f "${_LG_PID_FILE}"
+fi
 
 # 1) Delete jobs
 while IFS=$'\t' read -r _jid _jname; do

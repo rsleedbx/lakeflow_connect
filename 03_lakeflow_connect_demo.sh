@@ -237,23 +237,22 @@ export PG_PRECREATE_SLOT_PUB="${PG_PRECREATE_SLOT_PUB:-1}"
 export FOREIGN_CATALOG_NAME="${FOREIGN_CATALOG_NAME:-${CONNECTION_NAME}}"
 
 # Hardcoded SCD matrix (no TABLE_SCD_TYPE); see README-demo-matrix.md Constraints
+# append_only is QBC-only; CDC/ICDC use scd_type2 for dtix
 export CDC_CT_MODE="${CDC_CT_MODE:-BOTH}"
 case "${CDC_QBC}" in
   qbc_fc|qbc_fcon)
     TABLE_SCD_ENTRIES_JSON='[{"table":"intpk","mode":"scd_type1"},{"table":"strpk","mode":"scd_type2"},{"table":"dtix","mode":"append_only"}]'
     ;;
   cdc|icdc|cdc_single_pipeline)
-    if [[ "${SOURCE_TYPE}" == "MYSQL" ]]; then
-      TABLE_SCD_ENTRIES_JSON='[{"table":"intpk","mode":"scd_type1"},{"table":"strpk","mode":"scd_type2"},{"table":"dtix","mode":"scd_type2"}]'
-    elif [[ "${SOURCE_TYPE}" == "SQLSERVER" && "${CDC_CT_MODE}" == "CT" ]]; then
+    if [[ "${SOURCE_TYPE}" == "SQLSERVER" && "${CDC_CT_MODE}" == "CT" ]]; then
       TABLE_SCD_ENTRIES_JSON='[{"table":"intpk","mode":"scd_type1"},{"table":"strpk","mode":"scd_type1"},{"table":"dtix","mode":"scd_type1"}]'
     else
-      # Postgres CDC; SQL Server BOTH/CDC; default
-      TABLE_SCD_ENTRIES_JSON='[{"table":"intpk","mode":"scd_type1"},{"table":"strpk","mode":"scd_type2"},{"table":"dtix","mode":"append_only"}]'
+      # MySQL / Postgres CDC; SQL Server BOTH/CDC — no append_only outside QBC
+      TABLE_SCD_ENTRIES_JSON='[{"table":"intpk","mode":"scd_type1"},{"table":"strpk","mode":"scd_type2"},{"table":"dtix","mode":"scd_type2"}]'
     fi
     ;;
   *)
-    TABLE_SCD_ENTRIES_JSON='[{"table":"intpk","mode":"scd_type1"},{"table":"strpk","mode":"scd_type2"},{"table":"dtix","mode":"append_only"}]'
+    TABLE_SCD_ENTRIES_JSON='[{"table":"intpk","mode":"scd_type1"},{"table":"strpk","mode":"scd_type2"},{"table":"dtix","mode":"scd_type2"}]'
     ;;
 esac
 export TABLE_SCD_ENTRIES_JSON
@@ -282,6 +281,7 @@ IG_OBJECTS_JSON="$(jq -n '
       {scd_type: "SCD_TYPE_1", primary_keys: ["pk"]}
     end)
     | if (env.CDC_QBC == "qbc_fc" or env.CDC_QBC == "qbc_fcon") then
+        # QBC: cursor on every SCD mode (scd_type1 / scd_type2 / append_only)
         . + {query_based_connector_config: {cursor_columns: ["dt"]}}
       else .
       end;

@@ -2,10 +2,10 @@
 # Delete Databricks demo objects matching ${WHOAMI}_<8-hex-id> from 03 naming.
 #
 # Usage:
-#   ./04_manual_delete.sh              # dry-run (default): list only
-#   ./04_manual_delete.sh --apply      # stop/delete pipelines, jobs, schemas
-#   ./04_manual_delete.sh --id 6a7f8a18
-#   ./04_manual_delete.sh --id 6a7f8a18 --apply
+#   ./06_manual_delete.sh              # dry-run (default): list only
+#   ./06_manual_delete.sh --apply      # delete jobs, pipelines, schemas
+#   ./06_manual_delete.sh --id 6a7f8a18
+#   ./06_manual_delete.sh --id 6a7f8a18 --apply
 #
 # Match: ^${WHOAMI}_[0-9a-f]{8}(_|$)
 # Scope: pipelines, jobs, UC schemas in TARGET_CATALOG.
@@ -95,6 +95,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # Discover jobs: exact-name lookups from IG pipeline names + *_cleanup
+# (no workspace-wide jobs list — empty candidates means no jobs)
 # ---------------------------------------------------------------------------
 _jobs_all='[]'
 _job_name_candidates="$(
@@ -121,31 +122,6 @@ while IFS= read -r _jname; do
     ' <(echo "${_jobs_all}") /tmp/dbx_stdout.$$)"
 done <<<"${_job_name_candidates}"
 
-# Fallback: paginated list only when we have no name candidates (e.g. no pipelines)
-if [[ -z "${_job_name_candidates}" ]]; then
-  _offset=0
-  _limit=100
-  while true; do
-    if ! DB_EXIT_ON_ERROR="PRINT_RETURN" DBX jobs list --limit "${_limit}" --offset "${_offset}"; then
-      break
-    fi
-    _page_len="$(jq 'if type=="array" then length else 0 end' /tmp/dbx_stdout.$$)"
-    if [[ "${_page_len}" -eq 0 ]]; then
-      break
-    fi
-    _jobs_all="$(jq -s --arg re "${_NAME_RE}" '
-        .[0] + [.[1][]? | select((.settings.name // .name // "") | test($re))]
-      ' <(echo "${_jobs_all}") /tmp/dbx_stdout.$$)"
-    if [[ "${_page_len}" -lt "${_limit}" ]]; then
-      break
-    fi
-    _offset=$((_offset + _limit))
-    if [[ "${_offset}" -ge 500 ]]; then
-      echo "WARN: jobs list fallback capped at offset ${_offset}; some orphan jobs may be missed" >&2
-      break
-    fi
-  done
-fi
 echo "${_jobs_all}" | jq 'unique_by(.job_id)' >"${_TMP_JOBS}"
 
 # ---------------------------------------------------------------------------
@@ -232,20 +208,10 @@ if [[ "${_np}" -eq 0 && "${_nj}" -eq 0 && "${_ns}" -eq 0 ]]; then
   kill -INT $$
 fi
 
-echo "Applying deletes..."
+echo "Applying deletes (jobs → pipelines → schemas)..."
 echo
 
-# 1) Stop pipelines
-while IFS=$'\t' read -r _pid _pname; do
-  [[ -z "${_pid}" ]] && continue
-  echo "pipelines stop ${_pname} (${_pid})"
-  if ! DB_EXIT_ON_ERROR="PRINT_RETURN" DBX pipelines stop "${_pid}"; then
-    echo "  WARN: stop failed (continuing)" >&2
-    _FAILS=$((_FAILS + 1))
-  fi
-done < <(jq -r '.[] | [.pipeline_id, .name] | @tsv' "${_TMP_PIPELINES}")
-
-# 2) Delete jobs
+# 1) Delete jobs
 while IFS=$'\t' read -r _jid _jname; do
   [[ -z "${_jid}" ]] && continue
   echo "jobs delete ${_jname} (${_jid})"
@@ -255,17 +221,17 @@ while IFS=$'\t' read -r _jid _jname; do
   fi
 done < <(jq -r '.[] | [.job_id, (.settings.name // .name)] | @tsv' "${_TMP_JOBS}")
 
-# 3) Delete pipelines
+# 2) Delete pipelines (no stop; cascade=true required for INGESTION_GATEWAY / MANAGED_INGESTION)
 while IFS=$'\t' read -r _pid _pname; do
   [[ -z "${_pid}" ]] && continue
-  echo "pipelines delete ${_pname} (${_pid})"
-  if ! DB_EXIT_ON_ERROR="PRINT_RETURN" DBX pipelines delete "${_pid}"; then
+  echo "pipelines delete (cascade=true) ${_pname} (${_pid})"
+  if ! DB_EXIT_ON_ERROR="PRINT_RETURN" DBX api delete "/api/2.0/pipelines/${_pid}?cascade=true"; then
     echo "  WARN: pipelines delete failed (continuing)" >&2
     _FAILS=$((_FAILS + 1))
   fi
 done < <(jq -r '.[] | [.pipeline_id, .name] | @tsv' "${_TMP_PIPELINES}")
 
-# 4) Delete schemas
+# 3) Delete schemas
 while IFS=$'\t' read -r _full; do
   [[ -z "${_full}" ]] && continue
   echo "schemas delete --force ${_full}"

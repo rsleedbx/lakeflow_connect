@@ -286,21 +286,6 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ${_demo_schema} GRANT ALL ON TABLES TO ${USER
 ALTER DEFAULT PRIVILEGES IN SCHEMA ${_demo_schema} GRANT ALL ON SEQUENCES TO ${USER_USERNAME};
 SELECT 1;
 EOF
-if [[ ! -s /tmp/psql_stderr.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
-    if [[ "${_demo_schema}" == "${DB_SCHEMA_SCH}" ]]; then
-      _sfx="_sch"
-    else
-      _sfx=""
-    fi
-    _drops="drop table if exists ${_demo_schema}.intpk${_sfx};
-    drop table if exists ${_demo_schema}.strpk${_sfx};
-    drop table if exists ${_demo_schema}.dtix${_sfx};"
-    nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DB_STDOUT=~/nohup.out DB_STDERR=~/nohup.out DB_CATALOG="$DB_CATALOG" SQLCLI >>~/nohup.out 2>&1 << EOF &
-    ${_drops}
-    drop schema if exists ${_demo_schema};
-EOF
-    echo -e "\nDeleting ${_demo_schema} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n"
-fi
 done
 
 # #############################################################################

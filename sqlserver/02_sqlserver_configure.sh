@@ -321,18 +321,6 @@ DB_EXIT_ON_ERROR=PRINT_EXIT DB_CATALOG="${DB_CATALOG}" SQLCLI_USER <<EOF
 create schema [${_demo_schema}]
 go
 EOF
-if [[ ! -s /tmp/sqlcmd_stdout.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
-    if [[ "${_demo_schema}" == "${DB_SCHEMA_SCH}" ]]; then
-      _sfx="_sch"
-    else
-      _sfx=""
-    fi
-    _drops="drop table [${_demo_schema}].[intpk${_sfx}];\ngo\ndrop table [${_demo_schema}].[strpk${_sfx}];\ngo\ndrop table [${_demo_schema}].[dtix${_sfx}];\ngo\ndrop schema [${_demo_schema}];\ngo"
-    nohup sleep "${DELETE_DB_AFTER_SLEEP}" && \
-      echo -e "${_drops}" | \
-      DB_CATALOG="${DB_CATALOG}" SQLCLI_USER >> ~/nohup.out 2>&1 &
-    echo -e "\nDeleting ${_demo_schema} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n"
-fi
 done
 
 # #############################################################################

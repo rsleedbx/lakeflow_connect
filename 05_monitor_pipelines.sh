@@ -7,7 +7,8 @@
 #   ./05_monitor_pipelines.sh --id 6a807c2f --updates 5
 #   ./05_monitor_pipelines.sh --json
 #
-# Match: ^${WHOAMI}_[0-9a-f]{8}(_|$)
+# Match: ^${WHOAMI}_[0-9a-f]{8}(_|$) ; if SOURCE_TYPE/CONNECTION_TYPE set,
+#   ^${WHOAMI}_[0-9a-f]{8}_${ENGINE}(_|$) (same engine scoping as 06)
 # Public REST only: GET /api/2.0/pipelines/{id}/events (INFO/WARN/ERROR).
 # METRICS-level events (UI "Output records" for many ICDC flows) are omitted by
 # the public API — this script reports INFO metrics + flow status + operation_progress.
@@ -76,7 +77,16 @@ if [[ -z "$DATABRICKS_HOST_NAME" || "$DATABRICKS_HOST_NAME" == "null" ]]; then
 fi
 export DATABRICKS_HOST_NAME
 
-if [[ -n "${_ID}" ]]; then
+_ENGINE="${SOURCE_TYPE:-${CONNECTION_TYPE:-}}"
+_ENGINE="${_ENGINE^^}"
+
+if [[ -n "${_ENGINE}" ]]; then
+  if [[ -n "${_ID}" ]]; then
+    _NAME_RE="^${WHOAMI}_${_ID}_${_ENGINE}(_|$)"
+  else
+    _NAME_RE="^${WHOAMI}_[0-9a-f]{8}_${_ENGINE}(_|$)"
+  fi
+elif [[ -n "${_ID}" ]]; then
   _NAME_RE="^${WHOAMI}_${_ID}(_|$)"
 else
   _NAME_RE="^${WHOAMI}_[0-9a-f]{8}(_|$)"
@@ -85,6 +95,9 @@ fi
 if [[ "${_JSON}" -eq 0 ]]; then
   echo "Profile : ${DATABRICKS_CONFIG_PROFILE}"
   echo "WHOAMI  : ${WHOAMI}"
+  if [[ -n "${_ENGINE}" ]]; then
+    echo "Engine  : ${_ENGINE}"
+  fi
   echo "Pattern : ${_NAME_RE}"
   echo "Updates : last ${_UPDATES} per pipeline"
   echo

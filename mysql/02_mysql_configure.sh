@@ -88,22 +88,6 @@ echo -e "Creating schemas ${DB_SCHEMA} and ${DB_SCHEMA_SCH}\n"
 
 for _demo_schema in "${DB_SCHEMA}" "${DB_SCHEMA_SCH}"; do
 DB_CATALOG="mysql" SQLCLI -e "create schema if not exists ${_demo_schema}" </dev/null
-
-if [[ ! -s /tmp/mysql_stderr.$$ ]] && [[ -n "${DELETE_DB_AFTER_SLEEP}" ]]; then
-    if [[ "${_demo_schema}" == "${DB_SCHEMA_SCH}" ]]; then
-      _sfx="_sch"
-    else
-      _sfx=""
-    fi
-    _drop_tables="drop table if exists ${_demo_schema}.intpk${_sfx};
-    drop table if exists ${_demo_schema}.strpk${_sfx};
-    drop table if exists ${_demo_schema}.dtix${_sfx};"
-    nohup sleep "${DELETE_DB_AFTER_SLEEP}" && DB_STDOUT=~/nohup.out DB_STDERR=~/nohup.out DB_CATALOG="mysql" SQLCLI >>~/nohup.out 2>&1 << EOF &
-    ${_drop_tables}
-    drop schema if exists ${_demo_schema};
-EOF
-    echo -e "\nDeleting ${_demo_schema} schema after ${DELETE_DB_AFTER_SLEEP}.  To cancel kill -9 $!\n"
-fi
 done
 
 # #############################################################################

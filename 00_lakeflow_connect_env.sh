@@ -166,8 +166,8 @@ export CDC_QBC=${CDC_QBC:-"cdc"}
 export COMPUTE_GATEWAY=${COMPUTE_GATEWAY:-"default"}
 export COMPUTE_INGEST=${COMPUTE_INGEST:-"default"}
 
-# Postgres: cleanup + pre-create slot/publication in 02; pass slot_config in 03.
-# Set to 0 later when notebook/Databricks owns slot lifecycle.
+# Postgres: when 1, 03 creates a per-pipeline slot/pub (NINE_CHAR_ID) and passes slot_config.
+# 02 does not create a shared default slot/pub. Set 0 to omit slot_config (Databricks owns lifecycle).
 case "${PG_PRECREATE_SLOT_PUB:-1}" in
   1|true|TRUE|yes|YES|y|Y) export PG_PRECREATE_SLOT_PUB="1" ;;
   0|false|FALSE|no|NO|n|N) export PG_PRECREATE_SLOT_PUB="0" ;;
@@ -840,22 +840,27 @@ export -f put_secrets
 
 # #############################################################################
 
-# should be overridden by the individual provider
-SQLCLI() {
-    echo "{@}"
-}
-export -f SQLCLI
+# Placeholder only when unset — do not wipe provider overrides from 01_* on re-source.
+if ! declare -F SQLCLI >/dev/null; then
+  SQLCLI() {
+      echo "{@}"
+  }
+  export -f SQLCLI
+fi
 
-# can be left as is
-SQLCLI_DBA() {
-    DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="" SQLCLI "${@}"
-}
-export -f SQLCLI_DBA
+if ! declare -F SQLCLI_DBA >/dev/null; then
+  SQLCLI_DBA() {
+      DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="" SQLCLI "${@}"
+  }
+  export -f SQLCLI_DBA
+fi
 
-SQLCLI_USER() {
-    DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" SQLCLI "${@}"
-}
-export -f SQLCLI_USER
+if ! declare -F SQLCLI_USER >/dev/null; then
+  SQLCLI_USER() {
+      DB_USERNAME="${USER_USERNAME}" DB_PASSWORD="${USER_PASSWORD}" SQLCLI "${@}"
+  }
+  export -f SQLCLI_USER
+fi
 
 # #############################################################################
 # connection 

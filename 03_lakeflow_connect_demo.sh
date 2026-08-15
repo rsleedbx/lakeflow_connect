@@ -227,6 +227,25 @@ fi
 echo -e "\nCreate Ingestion Pipeline"
 echo -e   "-------------------------\n"
 
+# Postgres CDC: per-pipeline slot/publication named ${WHOAMI}_${NINE_CHAR_ID}
+export PG_SLOT_NAME="${PG_SLOT_NAME:-}"
+export PG_PUBLICATION_NAME="${PG_PUBLICATION_NAME:-}"
+if [[ "${SOURCE_TYPE}" == "POSTGRESQL" ]] \
+  && [[ "${PG_PRECREATE_SLOT_PUB:-1}" == "1" ]] \
+  && [[ "${CDC_QBC}" == "cdc" || "${CDC_QBC}" == "icdc" || "${CDC_QBC}" == "cdc_single_pipeline" ]]; then
+  if ! declare -F db_setup_pipeline_slot_pub >/dev/null; then
+    # shellcheck source=postgres/02_postgres_configure.sh
+    PG_CONFIGURE_MAIN=0 source "${_LFC_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" && pwd)}/postgres/02_postgres_configure.sh" \
+      || { echo "ERROR: could not load db_setup_pipeline_slot_pub" >&2; kill -INT $$; }
+  fi
+  if ! db_setup_pipeline_slot_pub "${NINE_CHAR_ID}"; then
+    echo "ERROR: db_setup_pipeline_slot_pub ${NINE_CHAR_ID} failed" >&2
+    kill -INT $$
+  fi
+  export PG_SLOT_NAME="${WHOAMI}_${NINE_CHAR_ID}"
+  export PG_PUBLICATION_NAME="${PG_SLOT_NAME}_pub"
+fi
+
 export INGESTION_PIPELINE_ID="${INGESTION_PIPELINE_ID:-}"
 export SOURCE_TYPE DB_CATALOG DB_SCHEMA DB_SCHEMA_SCH
 export TARGET_CATALOG TARGET_SCHEMA
@@ -234,6 +253,7 @@ export INGESTION_PIPELINE_NAME INGESTION_PIPELINE_CONTINUOUS PIPELINE_DEV_MODE
 export COMPUTE_INGEST CONNECTION_NAME CDC_QBC
 export GATEWAY_PIPELINE_ID PUBLISH_EVENT_LOG ELOG_CATALOG ELOG_SCHEMA
 export PG_PRECREATE_SLOT_PUB="${PG_PRECREATE_SLOT_PUB:-1}"
+export PG_SLOT_NAME PG_PUBLICATION_NAME
 export FOREIGN_CATALOG_NAME="${FOREIGN_CATALOG_NAME:-${CONNECTION_NAME}}"
 
 # Hardcoded SCD matrix (no TABLE_SCD_TYPE); see README-demo-matrix.md Constraints
@@ -364,6 +384,7 @@ ig_spec="$(jq -n '
        .
      end)
   | (if env.SOURCE_TYPE == "POSTGRESQL" and env.PG_PRECREATE_SLOT_PUB == "1"
+        and (env.PG_SLOT_NAME // "") != ""
         and (env.CDC_QBC == "cdc" or env.CDC_QBC == "cdc_single_pipeline" or env.CDC_QBC == "icdc") then
        .ingestion_definition += {
          source_configurations: [
@@ -372,8 +393,8 @@ ig_spec="$(jq -n '
                source_catalog: env.DB_CATALOG,
                postgres: {
                  slot_config: {
-                   slot_name: env.DB_SCHEMA,
-                   publication_name: (env.DB_SCHEMA + "_pub")
+                   slot_name: env.PG_SLOT_NAME,
+                   publication_name: env.PG_PUBLICATION_NAME
                  }
                }
              }

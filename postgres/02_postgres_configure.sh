@@ -21,12 +21,145 @@ fi
 
 export DB_SCHEMA
 export DB_SCHEMA_SCH="${DB_SCHEMA}_sch"
-echo "Demo schemas: DB_SCHEMA=${DB_SCHEMA} (per-table) DB_SCHEMA_SCH=${DB_SCHEMA_SCH} (*_sch tables)"
 
 _POSTGRES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" && pwd)"
 export _POSTGRES_DIR
 _LFC_REPO_ROOT="${_LFC_REPO_ROOT:-$(cd "${_POSTGRES_DIR}/.." && pwd)}"
 export _LFC_REPO_ROOT
+
+# #############################################################################
+# Per-pipeline slot/publication helpers (always defined; callable from 03/06)
+# Names: slot=${WHOAMI}_${NINE_CHAR_ID}  pub=${WHOAMI}_${NINE_CHAR_ID}_pub
+
+db_replication_cleanup() {
+    local GATEWAY_PIPELINE_ID=${1:-$GATEWAY_PIPELINE_ID}
+
+    DB_CATALOG="postgres" SQLCLI -c "select slot_name FROM pg_replication_slots where slot_name like 'dbx_%_$GATEWAY_PIPELINE_ID'" </dev/null
+    read -rd "\n" -a slot_names <<< "$(cat /tmp/psql_stdout.$$)"
+    if [[ -n "${slot_names[*]}" ]]; then
+        echo "slot name cleanup"
+        for slot_name in "${slot_names[@]}"; do
+            DB_CATALOG="postgres" SQLCLI -c "select pg_drop_replication_slot('$slot_name');" 
+        done
+    fi
+}
+export -f db_replication_cleanup
+
+db_orphaned_publication_cleanup() {
+    echo "cleaning orphaned postgres publications"
+    echo "
+            DO \$\$
+            DECLARE
+                pub_record RECORD;
+                has_active_slots BOOLEAN;
+            BEGIN
+                -- Check if there are any active slots at all
+                SELECT EXISTS(SELECT 1 FROM pg_replication_slots WHERE active = true) INTO has_active_slots;
+                
+                -- Only drop publications if no active slots exist
+                IF NOT has_active_slots THEN
+                    FOR pub_record IN 
+                        SELECT pubname
+                        FROM pg_publication
+                        WHERE pubname LIKE 'dbx_pub_%' OR pubname LIKE '%_pub'
+                    LOOP
+                        RAISE NOTICE 'Dropping publication: %', pub_record.pubname;
+                        EXECUTE format('DROP PUBLICATION IF EXISTS %I', pub_record.pubname);
+                    END LOOP;
+                END IF;
+            END \$\$;
+    " | DB_CATALOG="postgres" SQLCLI
+}
+export -f db_orphaned_publication_cleanup
+
+# Create publication + pgoutput slot for one pipeline run. Tables must already exist.
+db_setup_pipeline_slot_pub() {
+    local nine_char_id="${1:?NINE_CHAR_ID required}"
+    local slot_name="${WHOAMI}_${nine_char_id}"
+    local pub_name="${slot_name}_pub"
+    local ddl_audit="${DDL_AUDIT_TABLE:-lakeflow_ddl_audit_table_1_0}"
+
+    echo "Creating publication ${pub_name} and slot ${slot_name} (pgoutput)"
+
+    if ! DB_EXIT_ON_ERROR="PRINT_RETURN" DB_CATALOG="${DB_CATALOG}" SQLCLI <<EOF
+CREATE PUBLICATION ${pub_name} FOR TABLE
+  ${DB_SCHEMA}.intpk, ${DB_SCHEMA}.strpk, ${DB_SCHEMA}.dtix,
+  ${DB_SCHEMA_SCH}.intpk_sch, ${DB_SCHEMA_SCH}.strpk_sch, ${DB_SCHEMA_SCH}.dtix_sch;
+SELECT 'init' FROM pg_create_logical_replication_slot('${slot_name}', 'pgoutput');
+EOF
+    then
+        echo "ERROR: failed to create publication/slot ${pub_name} / ${slot_name}" >&2
+        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+        return 1
+    fi
+
+    # Add DDL audit table to this pipeline's publication when present
+    DB_EXIT_ON_ERROR="PRINT_RETURN" DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" \
+      DB_CATALOG="${DB_CATALOG}" SQLCLI <<EOF
+DO \$\$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_tables
+    WHERE schemaname = 'public' AND tablename = '${ddl_audit}'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = '${pub_name}'
+      AND schemaname = 'public'
+      AND tablename = '${ddl_audit}'
+  ) THEN
+    EXECUTE format('ALTER PUBLICATION %I ADD TABLE public.%I', '${pub_name}', '${ddl_audit}');
+  END IF;
+END \$\$;
+EOF
+
+    DB_EXIT_ON_ERROR="PRINT_RETURN" DB_CATALOG="${DB_CATALOG}" SQLCLI -c \
+      "SELECT slot_name, plugin FROM pg_replication_slots WHERE slot_name = '${slot_name}' AND plugin = 'pgoutput'" </dev/null
+    if ! grep -qE "^${slot_name},pgoutput$" /tmp/psql_stdout.$$; then
+        echo "ERROR: logical replication slot ${slot_name} with pgoutput does not exist" >&2
+        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+        return 1
+    fi
+
+    DB_EXIT_ON_ERROR="PRINT_RETURN" DB_CATALOG="${DB_CATALOG}" SQLCLI -c \
+      "SELECT pubname FROM pg_publication WHERE pubname = '${pub_name}'" </dev/null
+    if ! grep -qE "^${pub_name}$" /tmp/psql_stdout.$$; then
+        echo "ERROR: publication ${pub_name} does not exist" >&2
+        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
+        return 1
+    fi
+
+    echo "replication ok slot=${slot_name} pub=${pub_name} ${DB_HOST_FQDN},${DB_PORT}"
+    export PG_SLOT_NAME="${slot_name}"
+    export PG_PUBLICATION_NAME="${pub_name}"
+}
+export -f db_setup_pipeline_slot_pub
+
+# Drop per-pipeline slot then publication (used by 06_manual_delete).
+db_drop_pipeline_slot_pub() {
+    local nine_char_id="${1:?NINE_CHAR_ID required}"
+    local slot_name="${WHOAMI}_${nine_char_id}"
+    local pub_name="${slot_name}_pub"
+
+    echo "Dropping slot ${slot_name} and publication ${pub_name}"
+
+    DB_EXIT_ON_ERROR="PRINT_RETURN" DB_CATALOG="${DB_CATALOG:-postgres}" SQLCLI <<EOF
+DO \$\$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = '${slot_name}') THEN
+    PERFORM pg_drop_replication_slot('${slot_name}');
+  END IF;
+END \$\$;
+DROP PUBLICATION IF EXISTS ${pub_name};
+EOF
+}
+export -f db_drop_pipeline_slot_pub
+
+# Load helpers only (03/06): skip schema/table/replica main configure.
+if [[ "${PG_CONFIGURE_MAIN:-1}" != "1" ]]; then
+    return 0
+fi
+
+echo "Demo schemas: DB_SCHEMA=${DB_SCHEMA} (per-table) DB_SCHEMA_SCH=${DB_SCHEMA_SCH} (*_sch tables)"
 
 # #############################################################################
 # dml generator for postgres
@@ -136,57 +269,6 @@ else cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
     return 1
 fi
 
-# remove left over slot names
-db_replication_cleanup() {
-    local GATEWAY_PIPELINE_ID=${1:-$GATEWAY_PIPELINE_ID}
-
-    DB_CATALOG="postgres" SQLCLI -c "select slot_name FROM pg_replication_slots where slot_name like 'dbx_%_$GATEWAY_PIPELINE_ID'" </dev/null
-    read -rd "\n" -a slot_names <<< "$(cat /tmp/psql_stdout.$$)"
-    if [[ -n "${slot_names[*]}" ]]; then
-        echo "slot name cleanup"
-        for slot_name in "${slot_names[@]}"; do
-            DB_CATALOG="postgres" SQLCLI -c "select pg_drop_replication_slot('$slot_name');" 
-        done
-    fi
-}
-export -f db_replication_cleanup
-
-db_orphaned_publication_cleanup() {
-    echo "cleaning orphaned postgres publications"
-    echo "
-            DO \$\$
-            DECLARE
-                pub_record RECORD;
-                has_active_slots BOOLEAN;
-            BEGIN
-                -- Check if there are any active slots at all
-                SELECT EXISTS(SELECT 1 FROM pg_replication_slots WHERE active = true) INTO has_active_slots;
-                
-                -- Only drop publications if no active slots exist
-                IF NOT has_active_slots THEN
-                    FOR pub_record IN 
-                        SELECT pubname
-                        FROM pg_publication
-                        WHERE pubname LIKE 'dbx_pub_%' OR pubname LIKE '%_pub'
-                    LOOP
-                        RAISE NOTICE 'Dropping publication: %', pub_record.pubname;
-                        EXECUTE format('DROP PUBLICATION IF EXISTS %I', pub_record.pubname);
-                    END LOOP;
-                END IF;
-            END \$\$;
-    " | DB_CATALOG="postgres" SQLCLI
-}
-export -f db_orphaned_publication_cleanup
-
-db_enable_replication_slot() {
-    # Tables must already exist (CREATE PUBLICATION FOR TABLE requires them).
-    # One publication covers DB_SCHEMA + DB_SCHEMA_SCH (*_sch tables).
-    echo "CREATE PUBLICATION ${DB_SCHEMA}_pub FOR TABLE ${DB_SCHEMA}.intpk, ${DB_SCHEMA}.strpk, ${DB_SCHEMA}.dtix, ${DB_SCHEMA_SCH}.intpk_sch, ${DB_SCHEMA_SCH}.strpk_sch, ${DB_SCHEMA_SCH}.dtix_sch" | SQLCLI
-    echo "SELECT 'init' FROM pg_create_logical_replication_slot('${DB_SCHEMA}', 'pgoutput')" | SQLCLI
-    echo "SELECT * FROM pg_replication_slots WHERE slot_name = '${DB_SCHEMA}'" | SQLCLI
-}
-export -f db_enable_replication_slot
-
 # #############################################################################
 
 # create schemas: DB_SCHEMA (per-table) + DB_SCHEMA_SCH (*_sch tables)
@@ -267,22 +349,9 @@ EOF
 done
 
 # #############################################################################
-# publication + slot (after tables exist)
+# No default slot/publication here — 03 calls db_setup_pipeline_slot_pub per pipeline.
 
-if [[ "${PG_PRECREATE_SLOT_PUB:-1}" == "1" ]]; then
-    db_replication_cleanup
-    db_orphaned_publication_cleanup
-    db_enable_replication_slot
-    # [0-9]+ = datoid; ,${DB_CATALOG}, = database column (non-empty)
-    if grep -qE "^${DB_SCHEMA},pgoutput,logical,[0-9]+,${DB_CATALOG}," /tmp/psql_stdout.$$; then
-        echo "replication ok $DB_SCHEMA schema $DB_HOST_FQDN,${DB_PORT} $DBA_USERNAME"
-    else
-        cat /tmp/psql_stdout.$$ /tmp/psql_stderr.$$
-        return 1
-    fi
-else
-    echo "PG_PRECREATE_SLOT_PUB=0: skipping slot/publication cleanup and create"
-fi
+echo "Skipping default slot/publication create (per-pipeline via db_setup_pipeline_slot_pub from 03)"
 
 # #############################################################################
 # Optional: inline DDL change tracking (Lakeflow PG DDL audit objects)
@@ -294,28 +363,10 @@ DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" DB_CATALOG="${DB_CAT
   python3 "${_LFC_REPO_ROOT}/utils/postgres-ddl-change-tracking.py" \
     --apply || return 1
 
-# Add audit table to the demo publication (must run as publication owner / DBA)
 DDL_AUDIT_TABLE="lakeflow_ddl_audit_table_1_0"
-if [[ "${PG_PRECREATE_SLOT_PUB:-1}" == "1" ]]; then
-DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" \
-  DB_CATALOG="${DB_CATALOG}" SQLCLI <<EOF
-DO \$\$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_publication_tables
-    WHERE pubname = '${DB_SCHEMA}_pub'
-      AND schemaname = 'public'
-      AND tablename = '${DDL_AUDIT_TABLE}'
-  ) THEN
-    EXECUTE format('ALTER PUBLICATION %I ADD TABLE public.%I', '${DB_SCHEMA}_pub', '${DDL_AUDIT_TABLE}');
-  END IF;
-END \$\$;
-EOF
-else
-    echo "PG_PRECREATE_SLOT_PUB=0: skipping ALTER PUBLICATION for DDL audit table"
-fi
+export DDL_AUDIT_TABLE
 
-# Verify audit objects
+# Verify audit objects (ALTER PUBLICATION for audit table is done in db_setup_pipeline_slot_pub)
 DB_EXIT_ON_ERROR="PRINT_EXIT" DB_USERNAME="${DBA_USERNAME}" DB_PASSWORD="${DBA_PASSWORD}" \
   DB_CATALOG="${DB_CATALOG}" SQLCLI -c "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'lakeflow_ddl_audit_table%';" </dev/null
 if ! grep -q "${DDL_AUDIT_TABLE}" /tmp/psql_stdout.$$; then
@@ -360,25 +411,32 @@ _pg_set_replica() {
     fi
 }
 
-if [[ "$CDC_CT_MODE" == "BOTH" || "$CDC_CT_MODE" == "CDC" || "$CDC_CT_MODE" == "NONE" ]]; then
-    _pg_set_replica "${DB_SCHEMA}" dtix f full
-    _pg_set_replica "${DB_SCHEMA_SCH}" dtix_sch f full
-    _pg_set_replica "${DB_SCHEMA}" strpk d default
-    _pg_set_replica "${DB_SCHEMA_SCH}" strpk_sch d default
-else
-    _pg_set_replica "${DB_SCHEMA}" dtix n nothing
-    _pg_set_replica "${DB_SCHEMA_SCH}" dtix_sch n nothing
-    _pg_set_replica "${DB_SCHEMA}" strpk n nothing
-    _pg_set_replica "${DB_SCHEMA_SCH}" strpk_sch n nothing
-fi
+# CDC path: dtix+strpk → full; CT path: intpk → default; else nothing
+_cdc_on=0
+_ct_on=0
+case "${CDC_CT_MODE}" in
+  BOTH|CDC|NONE) _cdc_on=1 ;;
+esac
+case "${CDC_CT_MODE}" in
+  BOTH|CT|NONE) _ct_on=1 ;;
+esac
 
-if [[ "$CDC_CT_MODE" == "BOTH" || "$CDC_CT_MODE" == "CT" || "$CDC_CT_MODE" == "NONE" ]]; then
-    _pg_set_replica "${DB_SCHEMA}" intpk d default
-    _pg_set_replica "${DB_SCHEMA_SCH}" intpk_sch d default
-else
-    _pg_set_replica "${DB_SCHEMA}" intpk n nothing
-    _pg_set_replica "${DB_SCHEMA_SCH}" intpk_sch n nothing
-fi
+for _pair in "${DB_SCHEMA}:" "${DB_SCHEMA_SCH}:_sch"; do
+  _sch="${_pair%%:*}"
+  _sfx="${_pair#*:}"
+  if [[ "${_cdc_on}" -eq 1 ]]; then
+    _pg_set_replica "${_sch}" "dtix${_sfx}" f full
+    _pg_set_replica "${_sch}" "strpk${_sfx}" f full
+  else
+    _pg_set_replica "${_sch}" "dtix${_sfx}" n nothing
+    _pg_set_replica "${_sch}" "strpk${_sfx}" n nothing
+  fi
+  if [[ "${_ct_on}" -eq 1 ]]; then
+    _pg_set_replica "${_sch}" "intpk${_sfx}" d default
+  else
+    _pg_set_replica "${_sch}" "intpk${_sfx}" n nothing
+  fi
+done
 
 # #############################################################################
 

@@ -89,7 +89,10 @@ fi
 
 _TMP_PIPELINES="$(mktemp)"
 _TMP_REPORT="$(mktemp)"
-trap 'rm -f "${_TMP_PIPELINES}" "${_TMP_REPORT}"' EXIT
+_TMP_UPDATES="$(mktemp)"
+_TMP_EVENTS="$(mktemp)"
+_TMP_ONE="$(mktemp)"
+trap 'rm -f "${_TMP_PIPELINES}" "${_TMP_REPORT}" "${_TMP_UPDATES}" "${_TMP_EVENTS}" "${_TMP_ONE}" "${_TMP_REPORT}.n"' EXIT
 
 # ---------------------------------------------------------------------------
 # Discover pipelines (server-side filter + client hex8 / --id narrow)
@@ -126,14 +129,18 @@ fetch_updates_json() {
     /tmp/dbx_stdout.$$
 }
 
-# Collect flow_progress metrics events (with details) via raw API; page up to cap.
+# Collect flow_progress metrics + error events via raw API; page up to cap.
+# Writes JSON array to outfile (avoids ARG_MAX from --argjson with large payloads).
 fetch_metric_events_json() {
   local pid="$1"
+  local outfile="$2"
   local page=0
   local token=""
-  local all='[]'
-  local qs more next
+  local qs next
+  local page_file
 
+  echo '[]' >"${outfile}"
+  page_file="$(mktemp)"
   while [[ "${page}" -lt "${_MAX_EVENT_PAGES}" ]]; do
     qs="max_results=${_EVENTS_PAGE_SIZE}"
     if [[ -n "${token}" ]]; then
@@ -142,11 +149,14 @@ fetch_metric_events_json() {
     if ! DB_EXIT_ON_ERROR="PRINT_RETURN" DBX api get "/api/2.0/pipelines/${pid}/events?${qs}" >/dev/null; then
       break
     fi
-    more="$(jq '[.events[]? | select(
-        .event_type == "flow_progress"
-        and .details.flow_progress.metrics != null
-      )]' /tmp/dbx_stdout.$$)"
-    all="$(jq -n --argjson a "${all}" --argjson b "${more}" '$a + $b')"
+    jq '[.events[]? | select(
+        (.event_type == "flow_progress" and .details.flow_progress.metrics != null)
+        or .level == "ERROR"
+        or (.details.update_progress.state // "") == "FAILED"
+        or ((.details.flow_progress.status // "") | test("FAILED"; "i"))
+      )]' /tmp/dbx_stdout.$$ >"${page_file}"
+    jq -s 'add' "${outfile}" "${page_file}" >"${outfile}.n" \
+      && mv "${outfile}.n" "${outfile}"
     next="$(jq -r '.next_page_token // empty' /tmp/dbx_stdout.$$)"
     if [[ -z "${next}" ]]; then
       break
@@ -154,29 +164,32 @@ fetch_metric_events_json() {
     token="${next}"
     page=$((page + 1))
   done
-  echo "${all}"
+  rm -f "${page_file}"
 }
 
-# Build per-update flow stats from metric events + update list.
-# stdin unused; args via env files / vars.
+# Build per-update flow stats from metric events + update list (file paths).
 build_pipeline_report() {
   local name="$1"
   local pid="$2"
   local state="$3"
-  local updates_json="$4"
-  local events_json="$5"
+  local updates_file="$4"
+  local events_file="$5"
 
   jq -n \
     --arg name "${name}" \
     --arg pid "${pid}" \
     --arg state "${state}" \
     --arg url "${DATABRICKS_HOST_NAME}/pipelines/${pid}" \
-    --argjson updates "$(jq '.updates // []' <<<"${updates_json}")" \
-    --argjson events "${events_json}" \
+    --slurpfile updates_raw "${updates_file}" \
+    --slurpfile events "${events_file}" \
     '
-    # latest metrics event per (update_id, flow_name)
+    ($updates_raw[0] | if type=="array" then {updates:.} else . end | .updates // []) as $updates
+    | ($events[0] // []) as $events
+    |
+    # latest metrics event per (update_id, flow_name) — metrics-bearing only
     def flow_rows:
       ($events
+        | map(select(.details.flow_progress.metrics != null))
         | map({
             update_id: .origin.update_id,
             flow: (.origin.flow_name // "unknown"),
@@ -203,6 +216,24 @@ build_pipeline_report() {
             .backlog_bytes + .backlog_records + .backlog_files + .backlog_seconds > 0
           ))
       );
+
+    def truncate_msg($s):
+      if ($s | type) != "string" then null
+      elif ($s | length) <= 500 then $s
+      else ($s[0:500] + "…")
+      end;
+
+    # Prefer update_progress FAILED summary, then ERROR messages, then flow FAILED, then update.cause
+    def error_for($uid; $u):
+      ($events | map(select((.origin.update_id // "") == $uid))) as $ev
+      | (
+          ($ev | map(select((.details.update_progress.state // "") == "FAILED") | .message) | map(select(. != null and . != "")) | .[0] // null)
+          // ($ev | map(select(.level == "ERROR") | .message) | map(select(. != null and . != "")) | .[0] // null)
+          // ($ev | map(select(((.details.flow_progress.status // "") | test("FAILED"; "i"))) | .message) | map(select(. != null and . != "")) | .[0] // null)
+          // (if ($u.cause | type) == "string" and ($u.cause | length) > 0 then $u.cause else null end)
+          // (if $u.error != null then ($u.error | tostring) else null end)
+        )
+      | truncate_msg(.);
 
     def stats_for($uid):
       (flow_rows | map(select(.update_id == $uid))) as $flows
@@ -240,7 +271,8 @@ build_pipeline_report() {
               update_id: $u.update_id,
               state: $u.state,
               creation_time: $u.creation_time,
-              cause: ($u.cause // null)
+              cause: ($u.cause // null),
+              error: error_for($u.update_id; $u)
             }
             + stats_for($u.update_id)
         )
@@ -261,10 +293,11 @@ while IFS=$'\t' read -r _name _pid _state; do
   else
     echo "Fetching ${_name} (${_pid})..." >&2
   fi
-  _updates_json="$(fetch_updates_json "${_pid}")"
-  _events_json="$(fetch_metric_events_json "${_pid}")"
-  _one="$(build_pipeline_report "${_name}" "${_pid}" "${_state}" "${_updates_json}" "${_events_json}")"
-  jq -s '.[0] + [.[1]]' "${_TMP_REPORT}" <(echo "${_one}") >"${_TMP_REPORT}.n" \
+  fetch_updates_json "${_pid}" >"${_TMP_UPDATES}"
+  fetch_metric_events_json "${_pid}" "${_TMP_EVENTS}"
+  build_pipeline_report "${_name}" "${_pid}" "${_state}" "${_TMP_UPDATES}" "${_TMP_EVENTS}" \
+    >"${_TMP_ONE}"
+  jq -s '.[0] + [.[1]]' "${_TMP_REPORT}" "${_TMP_ONE}" >"${_TMP_REPORT}.n" \
     && mv "${_TMP_REPORT}.n" "${_TMP_REPORT}"
 done < <(jq -r '.[] | [.name, .pipeline_id, (.state // "")] | @tsv' "${_TMP_PIPELINES}")
 
@@ -295,10 +328,25 @@ for ((_i = 0; _i < _np_report; _i++)); do
       "update \(.update_id)  state=\(.state)  created=\(.creation_time)"
     ' "${_TMP_REPORT}"
 
+    _ustate="$(jq -r --argjson i "${_i}" --argjson j "${_j}" \
+      '.[$i].updates[$j].state // ""' "${_TMP_REPORT}")"
+    _uerr="$(jq -r --argjson i "${_i}" --argjson j "${_j}" \
+      '.[$i].updates[$j].error // empty' "${_TMP_REPORT}")"
+    _failed=0
+    if [[ "${_ustate}" == "FAILED" || "${_ustate}" == "CANCELED" ]]; then
+      _failed=1
+    fi
+    if [[ "${_failed}" -eq 1 && -n "${_uerr}" ]]; then
+      echo "  error  ${_uerr}"
+    fi
+
     _nf="$(jq --argjson i "${_i}" --argjson j "${_j}" \
       '.[$i].updates[$j].flows | length' "${_TMP_REPORT}")"
     if [[ "${_nf}" -eq 0 ]]; then
-      echo "  (no flow_progress metrics in recent events)"
+      # Prefer failure error over empty-metrics placeholder
+      if [[ "${_failed}" -eq 0 || -z "${_uerr}" ]]; then
+        echo "  (no flow_progress metrics in recent events)"
+      fi
     else
       # TSV -> column -t so adjacent zeros cannot render as "00" from tab stops
       jq -r --argjson i "${_i}" --argjson j "${_j}" '
